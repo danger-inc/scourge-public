@@ -3,7 +3,7 @@
 Dateien durchleuchten (Metadaten/EXIF), PDFs bearbeiten, Bildschirm aufnehmen,
 Videos schneiden, Memes bauen, Farbverläufe & ASCII-Kunst erzeugen – eine GTK4-App für Linux.
 
-## Installieren
+## Installieren – Linux
 
 ```bash
 git clone https://github.com/invincible-nix/scourge-public ~/scourge-src
@@ -11,9 +11,32 @@ cd ~/scourge-src
 ./install.sh
 ```
 
-Das Skript installiert die Abhängigkeiten (fragt vorher), kopiert Scourge nach
+Das Skript installiert die Abhängigkeiten (fragt vorher, einmal Passwort), kopiert Scourge nach
 `~/.local/share/scourge` und legt den Starter `scourge` und einen Menüeintrag an.
-Die Symbole bringt Scourge selbst mit (`app/fonts/notes-icons.ttf`).
+Die Symbole bringt Scourge selbst mit (`app/fonts/notes-icons.ttf`). Pakete, die es auf deiner Distribution
+nicht gibt, werden übersprungen und am Ende genannt.
+
+## Installieren – Windows 10/11
+
+1. Repo herunterladen (auf GitHub **Code → Download ZIP** und entpacken, oder `git clone …`).
+2. Im Ordner **`install-windows.bat`** doppelklicken.
+
+Das Skript richtet einmalig **MSYS2** ein (liefert GTK 4, Python, Poppler, GStreamer und ffmpeg für Windows,
+~1,5 GB, fragt nach Admin-Rechten), installiert die Schrift und legt Scourge ins Startmenü.
+Entfernen: `uninstall-windows.bat`. Unter Windows gibt es keine Bildschirmaufnahme und keine
+System-Einstellungen (beides Linux/Hyprland), und ✕ beendet Scourge ganz.
+
+## Läuft auf
+
+| System | Status |
+|---|---|
+| Ubuntu 24.04+, Linux Mint 22+, Debian 13 | getestet (Ubuntu 24.04) |
+| Fedora 39+ | getestet (Fedora 44) |
+| Arch, EndeavourOS, CachyOS, Manjaro | getestet (Arch) |
+| openSUSE Tumbleweed | sollte gehen (ungetestet) |
+| Windows 10/11 | über MSYS2 – App-Start getestet, Installer auf echtem Windows noch ungetestet |
+
+Nötig ist **GTK 4.12 oder neuer** (Ubuntu 22.04 / Mint 21 / Debian 12 sind zu alt – der Installer sagt das).
 
 ## Aktualisieren
 
@@ -22,7 +45,8 @@ cd ~/scourge-src
 ./update.sh
 ```
 
-Holt die neueste Version und installiert sie. Danach Scourge einmal neu starten.
+Holt die neueste Version und installiert sie (eine im Hintergrund laufende alte Version wird beendet).
+Windows: neue Version holen und `install-windows.bat` erneut starten.
 
 Starten danach:
 
@@ -45,7 +69,8 @@ scourge bild.jpg   # direkt eine Datei öffnen
 
 ## Was läuft wo
 
-Scourge braucht **Linux mit GTK4** (Wayland empfohlen, X11 geht für das meiste auch).
+Scourge braucht **GTK 4** (Linux mit Wayland empfohlen, X11 geht für das meiste auch; Windows über MSYS2).
+Auf GNOME, KDE und Windows hat das Fenster einen normalen Rahmen, auf Hyprland/Sway & Co. ist es rahmenlos.
 Die App passt sich automatisch an ein vorhandenes **matugen**-Theme an
 (`~/.cache/matugen/colors.css`); ist keines da, nutzt sie ein eigenes Farbschema.
 
@@ -71,8 +96,8 @@ und bleiben auf anderen Oberflächen einfach inaktiv.
 **GStreamer-Plugins:** base, good, libav (für Videowiedergabe)
 **Externe Tools:** ffmpeg, wl-clipboard
 
-- **Debian/Ubuntu:** `python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard`
-- **Fedora:** `python3-gobject python3-cairo gtk4 gstreamer1-plugins-base gstreamer1-plugins-good poppler-glib python3-pillow python3-numpy python3-lxml wl-clipboard ffmpeg` (ffmpeg via RPM Fusion)
+- **Debian/Ubuntu/Mint:** `python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard`
+- **Fedora:** `python3-gobject python3-cairo gtk4 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav poppler-glib python3-pillow python3-numpy python3-lxml wl-clipboard ffmpeg-free`
 - **openSUSE:** `python3-gobject typelib-1_0-Gtk-4_0 typelib-1_0-Poppler-0_18 typelib-1_0-Gst-1_0 gstreamer-plugins-base gstreamer-plugins-good python3-Pillow python3-numpy python3-lxml ffmpeg wl-clipboard`
 - **Arch:** `gtk4 python-gobject python-cairo gst-plugins-base gst-plugins-good poppler-glib python-pillow python-numpy python-lxml ffmpeg wl-clipboard ttf-jetbrains-mono-nerd`
 
@@ -84,3 +109,11 @@ und bleiben auf anderen Oberflächen einfach inaktiv.
 
 Entfernt die App, den Starter, den Menüeintrag und die Icons. Systempakete und die
 Schriftart bleiben.
+
+## Probleme?
+
+- **Kästchen statt Symbolen:** `./update.sh` – die Symbolschrift kommt mit und wird automatisch geladen.
+- **`scourge: Befehl nicht gefunden`:** `~/.local/bin` fehlt im PATH (der Installer zeigt, was in die
+  `~/.bashrc` gehört). Aus dem Anwendungsmenü startet es auch so.
+- **Videos spielen nicht ab:** GStreamer-Plugins fehlen (`gstreamer1.0-libav` bzw. `gst-libav`) – `./install.sh`
+  erneut und bei den Systempaketen „J“.

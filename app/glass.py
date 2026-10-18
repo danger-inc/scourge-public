@@ -28,6 +28,30 @@ button.glass-toggle { padding: 4px 11px; }
 """
 
 
+def tiling_desktop():
+    """Kachel-Fenstermanager (Hyprland, Sway, …) zeichnen Rahmen selbst. Überall sonst (GNOME, KDE, Windows)
+    braucht das Fenster einen eigenen Rahmen zum Verschieben und Größe-Ändern."""
+    env = os.environ
+    if os.name == "nt":
+        return False
+    if env.get("HYPRLAND_INSTANCE_SIGNATURE") or env.get("SWAYSOCK") or env.get("NIRI_SOCKET"):
+        return True
+    desk = env.get("XDG_CURRENT_DESKTOP", "").lower()
+    return any(d in desk for d in ("hyprland", "sway", "river", "niri", "wayfire", "i3", "bspwm", "qtile"))
+
+
+def frame_window(win):
+    """Kachel-WM: rahmenlos (Rahmen und Rundung kommen vom Compositor). Sonst: GTK-Rahmen mit Schatten und
+    Größenänderung, aber ohne zusätzliche Titelleiste – verschoben wird über die eigene Kopfzeile."""
+    if tiling_desktop():
+        win.set_decorated(False)
+    else:
+        win.set_decorated(True)
+        bar = Gtk.Box(visible=False)      # unsichtbare Titelleiste: nur Rahmen, keine Standard-Leiste
+        win.set_titlebar(bar)
+        win.add_css_class("framed")
+
+
 def load():
     try:
         with open(SETTINGS) as f:

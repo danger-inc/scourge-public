@@ -1,0 +1,145 @@
+﻿# install-windows.ps1 – installiert scourge, notist oder datist unter Windows 10/11.
+# Starten: Doppelklick auf install-windows.bat   (Entfernen: uninstall-windows.bat)
+# Ablauf: MSYS2 (liefert GTK 4 + Python für Windows) einrichten → Pakete → App nach %USERPROFILE%\.local\share
+# kopieren → Startmenü-Verknüpfung. Admin-Rechte braucht nur die einmalige MSYS2-Installation.
+# Kanonische Quelle: rice-apps-packaging/windows/ – Kopien liegen in den Repos.
+param([switch]$Uninstall, [switch]$Update)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'          # Fortschrittsbalken bremst Downloads in PowerShell 5 stark
+$Src = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+function Say($t)  { Write-Host $t -ForegroundColor Cyan }
+function Warn($t) { Write-Host $t -ForegroundColor Yellow }
+function Ask($q)  { if ($Update) { return $false }; $a = Read-Host "$q [J/n]"; return -not ($a -match '^[nN]') }
+
+# ------------------------------------------------------------------ welche App?
+$Share = Join-Path $HOME '.local\share'
+$Base = @('python', 'python-gobject', 'python-cairo', 'gtk4', 'adwaita-icon-theme', 'librsvg')
+if (Test-Path "$Src\app\scourge.py") {
+    $App = @{ Name = 'Scourge'; Dir = "$Share\scourge"; Main = 'scourge.py'; Icon = 'logo\scourge.ico'; Fonts = "$Src\fonts"
+              Pkgs = $Base + @('poppler', 'gstreamer', 'gst-plugins-base', 'gst-plugins-good', 'gst-libav',
+                               'python-pillow', 'python-numpy', 'python-lxml', 'ffmpeg') }
+    $Copy = { Copy-Item "$Src\app\*" $App.Dir -Recurse -Force }
+} elseif (Test-Path "$Src\app\notes.py") {
+    $App = @{ Name = 'notist'; Dir = "$Share\notes\app"; Main = 'notes.py'; Icon = 'logo\notist.ico'; Fonts = "$Src\fonts"
+              Pkgs = $Base + @('poppler', 'enchant') }
+    $Copy = { Copy-Item "$Src\app\*" $App.Dir -Recurse -Force }          # Daten liegen daneben in notes\data
+} elseif (Test-Path "$Src\app\calendar\ui.py") {
+    $App = @{ Name = 'datist'; Dir = "$Share\rice-apps\calendar"; Main = 'ui.py'; Icon = 'datist.ico'; Fonts = $null
+              Pkgs = $Base }
+    $Copy = {
+        Copy-Item "$Src\app\calendar\*" $App.Dir -Recurse -Force
+        Copy-Item "$Src\app\tui.py", "$Src\app\glass.py" "$Share\rice-apps" -Force
+        New-Item -ItemType Directory -Force "$Share\rice-apps\fonts" | Out-Null
+        Copy-Item "$Src\app\fonts\*" "$Share\rice-apps\fonts" -Force
+        Copy-Item "$Src\datist.ico" $App.Dir -Force
+    }
+} else {
+    throw 'Dieses Skript gehört in den Ordner von scourge, notist oder datist.'
+}
+$Programs = [Environment]::GetFolderPath('Programs')
+$Desktop = [Environment]::GetFolderPath('Desktop')
+$Lnk = "$($App.Name).lnk"
+
+# ------------------------------------------------------------------ entfernen
+if ($Uninstall) {
+    Say "== $($App.Name) entfernen =="
+    Remove-Item -Recurse -Force $App.Dir -ErrorAction SilentlyContinue
+    Remove-Item -Force "$Programs\$Lnk", "$Desktop\$Lnk" -ErrorAction SilentlyContinue
+    Say "$($App.Name) entfernt. Deine Daten/Einstellungen und MSYS2 (C:\msys64) bleiben."
+    return
+}
+
+Say "== $($App.Name) für Windows installieren =="
+
+# ------------------------------------------------------------------ MSYS2 (GTK 4 + Python)
+function Find-Msys {
+    foreach ($p in @("$env:SystemDrive\msys64", 'C:\msys64', "$env:LOCALAPPDATA\msys64")) {
+        if (Test-Path "$p\usr\bin\bash.exe") { return $p }
+    }
+    return $null
+}
+$Msys = Find-Msys
+if (-not $Msys) {
+    Say 'MSYS2 wird installiert (liefert GTK 4 und Python für Windows, einmalig ~1 GB) ...'
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id MSYS2.MSYS2 -e --silent --accept-source-agreements --accept-package-agreements | Out-Host
+        $Msys = Find-Msys
+    }
+    if (-not $Msys) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $exe = Join-Path $env:TEMP 'msys2-x86_64-latest.exe'
+        Invoke-WebRequest 'https://github.com/msys2/msys2-installer/releases/latest/download/msys2-x86_64-latest.exe' `
+            -OutFile $exe -UseBasicParsing
+        & $exe in --confirm-command --accept-messages --root C:/msys64 | Out-Host
+        $Msys = Find-Msys
+    }
+    if (-not $Msys) {
+        throw 'MSYS2 ließ sich nicht installieren. Bitte von https://www.msys2.org installieren und das Skript erneut starten.'
+    }
+}
+Say "MSYS2: $Msys"
+$env:MSYSTEM = 'UCRT64'
+$env:CHERE_INVOKING = '1'
+function Msys($cmd) {
+    & "$Msys\usr\bin\bash.exe" -lc $cmd | Out-Host
+    return $LASTEXITCODE
+}
+
+if (-not $Update -or -not (Test-Path "$Msys\ucrt64\bin\pythonw.exe")) {
+    Say 'Pakete aktualisieren und installieren (dauert beim ersten Mal einige Minuten) ...'
+    # Das erste Update erneuert oft MSYS2 selbst und beendet sich dann – deshalb zweimal.
+    Msys 'pacman -Syuu --noconfirm' | Out-Null
+    Msys 'pacman -Syuu --noconfirm' | Out-Null
+    $pk = ($App.Pkgs | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }) -join ' '
+    if ((Msys "pacman -S --needed --noconfirm $pk") -ne 0) {
+        Warn 'Nicht alle Pakete ließen sich installieren – siehe Meldungen oben. Weiter.'
+    }
+}
+$Py = "$Msys\ucrt64\bin\python.exe"
+$PyW = "$Msys\ucrt64\bin\pythonw.exe"
+if (-not (Test-Path $PyW)) { throw "Python fehlt in MSYS2 ($PyW) – Paketinstallation fehlgeschlagen?" }
+
+# ------------------------------------------------------------------ App kopieren
+Say "Kopiere $($App.Name) nach $($App.Dir) ..."
+if (Test-Path $App.Dir) { Remove-Item -Recurse -Force $App.Dir }
+New-Item -ItemType Directory -Force $App.Dir | Out-Null
+& $Copy
+
+# ------------------------------------------------------------------ Schrift (Oberfläche) – nur für diesen Benutzer
+if ($App.Fonts -and (Test-Path $App.Fonts)) {
+    $fdir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
+    $reg = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    New-Item -ItemType Directory -Force $fdir | Out-Null
+    if (-not (Test-Path $reg)) { New-Item -Force $reg | Out-Null }
+    foreach ($f in Get-ChildItem "$($App.Fonts)\*.ttf") {
+        $dst = Join-Path $fdir $f.Name
+        if (-not (Test-Path $dst)) {
+            Copy-Item $f.FullName $dst -Force
+            New-ItemProperty -Path $reg -Name "$($f.BaseName) (TrueType)" -Value $dst -PropertyType String -Force | Out-Null
+        }
+    }
+}
+
+# ------------------------------------------------------------------ Verknüpfungen
+function New-Link($path) {
+    $ws = New-Object -ComObject WScript.Shell
+    $l = $ws.CreateShortcut($path)
+    $l.TargetPath = $PyW
+    $l.Arguments = '"' + (Join-Path $App.Dir $App.Main) + '"'
+    $l.WorkingDirectory = $App.Dir
+    $l.IconLocation = (Join-Path $App.Dir $App.Icon) + ',0'
+    $l.Description = $App.Name
+    $l.Save()
+}
+New-Link "$Programs\$Lnk"
+if ((Test-Path "$Desktop\$Lnk") -or (Ask 'Auch eine Verknüpfung auf dem Desktop anlegen?')) { New-Link "$Desktop\$Lnk" }
+
+# ------------------------------------------------------------------ Selbsttest
+Say 'Prüfe ...'
+& $Py -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('  GTK %d.%d: ok' % (Gtk.get_major_version(), Gtk.get_minor_version()))" | Out-Host
+if ($LASTEXITCODE -ne 0) { Warn '  GTK/PyGObject fehlt – Skript bitte erneut starten.' }
+
+Say "Fertig! $($App.Name) steht jetzt im Startmenü."
+Write-Host 'Aktualisieren: neue Version holen (git pull bzw. ZIP neu laden) und install-windows.bat erneut starten.'
+Write-Host 'Entfernen:     uninstall-windows.bat'

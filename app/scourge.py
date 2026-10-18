@@ -3,6 +3,8 @@
 # Farben kommen live aus ~/.cache/matugen/colors.css (wechseln mit Super+W mit).
 # Start über Super+R ("Scourge") oder: scourge [datei]
 import colorsys, datetime, io, json, math, os, re, subprocess, sys
+if os.name == "nt":   # Windows/MSYS2: ffmpeg & Co. liegen neben python.exe – die Startmenü-Verknüpfung setzt kein PATH
+    os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -1526,6 +1528,9 @@ class Scourge(Gtk.Application):
         """Fenster schließen = nur ausblenden (Tabs bleiben, wie sie sind). Wirklich beenden: scourge --quit."""
         if self._quitting:
             return False
+        if os.name == "nt":            # Windows: kein D-Bus → versteckte Instanz wäre nicht wiederzufinden
+            self.really_quit()
+            return True
         for tab in self.tabs():
             tab.stop_media()
         self.close_drawer()
@@ -1611,7 +1616,7 @@ class Scourge(Gtk.Application):
 
         self.win = Gtk.ApplicationWindow(application=self, title="Scourge")
         self.win.set_default_size(1200, 780)
-        self.win.set_decorated(False)  # Hyprland zeichnet Rahmen und Rundung
+        getattr(glass, "frame_window", lambda w: w.set_decorated(False))(self.win)   # Kachel-WM: rahmenlos
         self.win.add_css_class("pb-window")
         self.win.connect("close-request", self.on_close_request)
         cur = lambda: self.current()

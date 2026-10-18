@@ -13,7 +13,7 @@ ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=Tr
     or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BLOCKLIST = os.path.expanduser("~/.config/notes-publish/blocklist.txt")
 
-ALLOWED = re.compile(r"^(app/[^/]+\.py|app/scourge\.sh|app/logo/[^/]+\.svg|app/fonts/[^/]+\.(ttf|txt)|app/VERSION|fonts/[^/]+\.ttf|"
+ALLOWED = re.compile(r"^([^/]+\.(ps1|bat|ico)|app/logo/[^/]+\.ico|app/[^/]+\.py|app/scourge\.sh|app/logo/[^/]+\.svg|app/fonts/[^/]+\.(ttf|txt)|app/VERSION|fonts/[^/]+\.ttf|"
                      r"[^/]+\.(sh|md|in)|\.gitignore|\.githooks/[^/]+)$")
 SECRETS = [
     (r"/home/[A-Za-z0-9_.-]+", "absoluter Pfad mit Benutzername"),
