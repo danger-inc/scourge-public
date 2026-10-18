@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Blockiert jeden Commit, der persönliche Daten enthalten könnte (siehe privacy-check.py).
+exec python3 "$(git rev-parse --show-toplevel)/.githooks/privacy-check.py" --staged

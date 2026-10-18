@@ -1,0 +1,11 @@
+# Nur Programmcode gehört hierher. Alles andere bleibt lokal.
+__pycache__/
+*.pyc
+data/
+backups/
+tools/
+*.zip
+*.tar.gz
+*.notes
+*.log
+.env

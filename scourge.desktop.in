@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Scourge
+GenericName=Datei-Durchleuchter & Bildschirmaufnahme
+Comment=Dateien durchleuchten, Bildschirm aufnehmen, Videos schneiden, Memes bauen
+Exec=@EXEC@ %f
+Icon=scourge
+Terminal=false
+Categories=Utility;AudioVideo;
+Keywords=scourge;xray;pixelblick;bild;foto;video;pdf;word;excel;metadaten;exif;privatsphäre;meme;aufnahme;bildschirmaufnahme;schneiden;cutter;
+MimeType=image/png;image/jpeg;image/webp;image/gif;video/mp4;application/pdf;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.oasis.opendocument.text;audio/mpeg;application/zip;
+StartupWMClass=de.invincible.Scourge

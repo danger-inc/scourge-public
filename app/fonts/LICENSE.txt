@@ -1,0 +1,10 @@
+notes-icons.ttf – Symbolschrift (geteilt mit notist)
+==========================================
+Ausschnitt (nur der Material-Design-Icons-Bereich U+F0001–U+F1AF0, plus Leerzeichen) aus
+„JetBrainsMono Nerd Font“ (Nerd Fonts, https://www.nerdfonts.com),
+umbenannt in „Notes Icons“, damit sie nicht mit installierten Schriften kollidiert.
+
+- Schriftdatei: SIL Open Font License 1.1 (https://openfontlicense.org)
+  Copyright 2020 The JetBrains Mono Project Authors
+- Enthaltene Symbole: Material Design Icons (Pictogrammers),
+  Apache License 2.0 (https://github.com/Templarian/MaterialDesign)
