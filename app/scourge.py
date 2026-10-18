@@ -1501,6 +1501,7 @@ class Scourge(Gtk.Application):
             self.keep_running()
             GLib.idle_add(self._prewarm)
             return
+        getattr(glass, "bring_here", lambda w: None)(self.win)   # offen auf anderem Arbeitsbereich → hierher holen
         self.win.present()
 
     def _prewarm(self):

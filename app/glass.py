@@ -1,7 +1,7 @@
 # Glas-Modus für Pixelblick, Wallpapaer und Notes: Fenster werden durchscheinend wie die Konsole
 # (kitty: background_opacity 0.6), Hyprland zeichnet den Blur dahinter. Die Einstellung gilt für alle
 # Apps gemeinsam und wird live übernommen, auch in Fenstern, die schon offen sind.
-import json, os
+import json, os, subprocess
 
 from gi.repository import Gio, GLib, Gtk
 
@@ -50,6 +50,29 @@ def frame_window(win):
         bar = Gtk.Box(visible=False)      # unsichtbare Titelleiste: nur Rahmen, keine Standard-Leiste
         win.set_titlebar(bar)
         win.add_css_class("framed")
+
+
+def _hypr(*args):
+    out = subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=2).stdout
+    return json.loads(out) if "-j" in args else out
+
+
+def bring_here(win):
+    """Hyprland: ist das Fenster schon auf einem anderen Arbeitsbereich/Bildschirm offen, wird es vor dem
+    Zeigen auf den aktuellen geholt (statt dorthin zu springen). Danach win.present() aufrufen."""
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not win.get_visible():
+        return                           # ein frisch gezeigtes Fenster landet ohnehin auf dem aktuellen
+    try:
+        ws = _hypr("activeworkspace", "-j")
+        mine = [c for c in _hypr("clients", "-j") if c.get("pid") == os.getpid() and c.get("mapped", True)]
+        title = win.get_title() or ""
+        hit = [c for c in mine if c.get("title") == title] or (mine if len(mine) == 1 else [])
+        for c in hit[:1]:
+            if c["workspace"]["id"] != ws["id"]:
+                _hypr("dispatch", f'hl.dsp.window.move({{ workspace = {ws["id"]}, '
+                                  f'window = "address:{c["address"]}", follow = false }})')
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        pass
 
 
 def load():
