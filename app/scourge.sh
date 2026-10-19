@@ -22,10 +22,33 @@ esac
 
 running || exec python3 "$MAIN" "$@"
 
+# Absicherung: Die Hintergrund-Instanz kann „blind“ werden (Grafik-Kontext kaputt) – sie nimmt den Aufruf an,
+# zeigt aber kein Fenster. Erscheint es nicht binnen ~2 s, wird sie beendet und Scourge frisch gestartet.
+shown() {
+    command -v hyprctl >/dev/null || return 0            # ohne Hyprland nicht prüfbar
+    local i
+    for (( i = 0; i < 20; i++ )); do
+        hyprctl clients -j 2>/dev/null | grep -q "\"class\": \"$APP\"" && return 0
+        sleep 0.1
+    done
+    return 1
+}
+restart() {
+    local pid
+    pid=$(gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.GetConnectionUnixProcessID "$APP" 2>/dev/null | grep -o '[0-9]\+' | tail -1)
+    if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null
+        for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+        kill -9 "$pid" 2>/dev/null
+    fi
+    exec python3 "$MAIN" "$@"
+}
+
 if [ $# -eq 0 ]; then
-    gdbus call --session --dest "$APP" --object-path "$OBJ" \
-        --method org.freedesktop.Application.Activate "{}" >/dev/null 2>&1 && exit 0
-    exec python3 "$MAIN"
+    gdbus call --session --timeout 3 --dest "$APP" --object-path "$OBJ" \
+        --method org.freedesktop.Application.Activate "{}" >/dev/null 2>&1 && { shown || restart; exit 0; }
+    restart                                              # Instanz antwortet nicht → neu starten
 fi
 
 urlencode() {      # Pfad → URI-Teil (UTF-8 byteweise, wie Gio es erwartet) – ohne Python-Start
@@ -46,6 +69,6 @@ for a in "$@"; do
     esac
 done
 join() { local IFS=,; echo "[$*]"; }
-gdbus call --session --dest "$APP" --object-path "$OBJ" \
-    --method org.freedesktop.Application.Open "$(join "${uris[@]}")" "{}" >/dev/null 2>&1 && exit 0
-exec python3 "$MAIN" "$@"
+gdbus call --session --timeout 3 --dest "$APP" --object-path "$OBJ" \
+    --method org.freedesktop.Application.Open "$(join "${uris[@]}")" "{}" >/dev/null 2>&1 && { shown || restart "$@"; exit 0; }
+restart "$@"

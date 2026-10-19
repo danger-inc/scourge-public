@@ -165,6 +165,11 @@ button.recent { border-radius: 4px; padding: 3px 8px; }
 button.recent:hover { background-color: alpha(@primary, 0.12); }
 .recent-path { font-size: 10px; color: @secondary; font-weight: normal; }
 button.recent-x { border-radius: 4px; }
+/* Cursor-Vorschau (System → Cursor) */
+.curtile { border: 1px solid alpha(@primary, 0.25); border-radius: 4px; padding: 8px 4px 4px; transition: border-color 120ms; }
+.curtile:hover { border-color: @primary; background-color: alpha(@primary, 0.08); }
+.curtile.light { background-color: #e9ecef; }
+.curtile.light .key { color: #3a4246; }
 .home.drag-over { background-color: alpha(@primary, 0.06); border-radius: 6px; }
 /* Überschriften und Texte */
 .tab-heading { font-size: 14px; font-weight: bold; }

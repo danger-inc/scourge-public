@@ -1,5 +1,5 @@
 # Startseite eines Scourge-Tabs: von hier geht es zu allen Funktionen.
-import os
+import os, shutil
 
 import chrome as ch
 
@@ -63,6 +63,8 @@ SYSTEM = [
     ("󰕾", "Ton", "Lautstärke, Mikrofon und Ausgabegerät wählen", "audio"),
     ("󰍽", "Eingabe", "Maus-Empfindlichkeit, Touchpad und Tastaturlayout", "input"),
     ("󰖩", "Funk", "WLAN und Bluetooth ein- und ausschalten", "radio"),
+    ("\U000F01BF", "Cursor", "Farbe, Größe und Verhalten des Mauszeigers", "cursor"),
+    ("󰕮", "Waybar", "Statusleiste neu starten, wenn sie abgestürzt ist", "waybar"),
 ]
 
 
@@ -132,9 +134,11 @@ class HomePage(Gtk.ScrolledWindow):
         page.append(self.recent_title)
 
 
-        box = heading("system & hardware", "Bildschirm, Ton, Eingabegeräte und Funk dieses Rechners steuern.")
+        box = heading("system & hardware", "Bildschirm, Ton, Eingabegeräte, Funk, Cursor und Waybar dieses Rechners steuern.")
         fl = flow()
         for icon, name, desc, section in SYSTEM:
+            if section == "waybar" and not shutil.which("waybar"):
+                continue
             fl.append(card(icon, name, desc, lambda section=section: self.open_settings(section)))
         try:
             import publish
