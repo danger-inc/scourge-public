@@ -613,7 +613,10 @@ def clean_pdf(src, dst):
     """qpdf schreibt das PDF neu (dabei fallen frühere Versionen weg); per JSON fliegen Metadaten & Co. raus."""
     with tempfile.TemporaryDirectory() as tmp:
         js = os.path.join(tmp, "a.json")
-        r = subprocess.run(["qpdf", "--json-output=2", src, js], capture_output=True, text=True)
+        try:
+            r = subprocess.run(["qpdf", "--json-output=2", src, js], capture_output=True, text=True)
+        except FileNotFoundError:
+            return False, "qpdf fehlt (Paket qpdf installieren)"
         if r.returncode not in (0, 3):
             return False, r.stderr.strip()[-120:]
         d = json.load(open(js))

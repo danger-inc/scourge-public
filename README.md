@@ -94,12 +94,12 @@ und bleiben auf anderen Oberflächen einfach inaktiv.
 **Python/GTK-Kern:** GTK4, PyGObject, pycairo, Pillow, numpy, lxml
 **GI-Typelibs:** Gtk-4.0, Gst-1.0 (GStreamer), Poppler-0.18
 **GStreamer-Plugins:** base, good, libav (für Videowiedergabe)
-**Externe Tools:** ffmpeg, wl-clipboard
+**Externe Tools:** ffmpeg, wl-clipboard, poppler-utils (pdftotext/pdfimages), qpdf
 
-- **Debian/Ubuntu/Mint:** `python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard`
-- **Fedora:** `python3-gobject python3-cairo gtk4 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav poppler-glib python3-pillow python3-numpy python3-lxml wl-clipboard ffmpeg-free`
-- **openSUSE:** `python3-gobject typelib-1_0-Gtk-4_0 typelib-1_0-Poppler-0_18 typelib-1_0-Gst-1_0 gstreamer-plugins-base gstreamer-plugins-good python3-Pillow python3-numpy python3-lxml ffmpeg wl-clipboard`
-- **Arch:** `gtk4 python-gobject python-cairo gst-plugins-base gst-plugins-good poppler-glib python-pillow python-numpy python-lxml ffmpeg wl-clipboard ttf-jetbrains-mono-nerd`
+- **Debian/Ubuntu/Mint:** `python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard poppler-utils qpdf`
+- **Fedora:** `python3-gobject python3-cairo gtk4 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav poppler-glib python3-pillow python3-numpy python3-lxml wl-clipboard ffmpeg-free poppler-utils qpdf`
+- **openSUSE:** `python3-gobject typelib-1_0-Gtk-4_0 typelib-1_0-Poppler-0_18 typelib-1_0-Gst-1_0 gstreamer-plugins-base gstreamer-plugins-good python3-Pillow python3-numpy python3-lxml ffmpeg wl-clipboard poppler-tools qpdf`
+- **Arch:** `gtk4 python-gobject python-cairo gst-plugins-base gst-plugins-good poppler-glib python-pillow python-numpy python-lxml ffmpeg wl-clipboard qpdf ttf-jetbrains-mono-nerd`
 
 ## Deinstallieren
 

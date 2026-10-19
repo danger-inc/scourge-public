@@ -20,10 +20,10 @@ echo
 # ---------------------------------------------------------------- Systempakete
 if ask "Systemabhängigkeiten jetzt per Paketmanager installieren?"; then
     pkg_install \
-        "gtk4 python python-gobject python-cairo glib2 gst-plugins-base gst-plugins-good gst-libav poppler-glib python-pillow python-numpy python-lxml ffmpeg wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp" \
-        "python3 python3-gi python3-gi-cairo gir1.2-gtk-4.0 libglib2.0-bin gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav libgtk-4-media-gstreamer python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp" \
-        "python3 python3-gobject python3-cairo gtk4 glib2 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav poppler-glib python3-pillow python3-numpy python3-lxml ffmpeg-free wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp" \
-        "python3 python3-gobject python3-gobject-cairo python3-gobject-Gdk typelib-1_0-Gtk-4_0 typelib-1_0-Poppler-0_18 typelib-1_0-Gst-1_0 glib2-tools gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-libav python3-Pillow python3-numpy python3-lxml ffmpeg wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp" \
+        "gtk4 python python-gobject python-cairo glib2 gst-plugins-base gst-plugins-good gst-libav poppler-glib python-pillow python-numpy python-lxml ffmpeg wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp poppler qpdf libnotify libpulse" \
+        "python3 python3-gi python3-gi-cairo gir1.2-gtk-4.0 libglib2.0-bin gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav libgtk-4-media-gstreamer python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp poppler-utils qpdf libnotify-bin pulseaudio-utils" \
+        "python3 python3-gobject python3-cairo gtk4 glib2 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav poppler-glib python3-pillow python3-numpy python3-lxml ffmpeg-free wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp poppler-utils qpdf libnotify pulseaudio-utils" \
+        "python3 python3-gobject python3-gobject-cairo python3-gobject-Gdk typelib-1_0-Gtk-4_0 typelib-1_0-Poppler-0_18 typelib-1_0-Gst-1_0 glib2-tools gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-libav python3-Pillow python3-numpy python3-lxml ffmpeg wl-clipboard fontconfig adwaita-icon-theme wf-recorder slurp poppler-tools qpdf libnotify-tools pulseaudio-utils" \
         || warn "Paketinstallation nicht vollständig – weiter."
 elif (( ! UPDATE )); then
     echo "Übersprungen. (Bei fehlenden Paketen: siehe README.md)"
@@ -81,6 +81,9 @@ print("  Python/GStreamer/Poppler: ok")
 PY
 for t in ffmpeg ffprobe wl-copy; do
     command -v "$t" >/dev/null 2>&1 && echo "  $t: ok" || { echo "  $t: FEHLT"; missing="$missing $t"; }
+done
+for t in pdftotext pdfimages qpdf; do
+    command -v "$t" >/dev/null 2>&1 && echo "  $t: ok" || echo "  $t: fehlt – PDF-Text/-Bilder bzw. PDF bereinigen gehen dann nicht (Paket poppler-utils / qpdf)"
 done
 for t in wf-recorder slurp; do
     command -v "$t" >/dev/null 2>&1 && echo "  $t: ok" || echo "  $t: fehlt – nur für die Bildschirmaufnahme (wlroots/Hyprland/Sway)"
