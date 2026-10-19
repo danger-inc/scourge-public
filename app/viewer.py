@@ -1056,8 +1056,21 @@ class PdfView(Gtk.Box):
             return False
         tmp = os.path.join(os.path.dirname(target) or ".", f".{os.path.basename(target)}.scourge-tmp")
         try:
-            self.doc.save(Gio.File.new_for_path(tmp).get_uri())
+            import formats
+            if formats.is_remote(target):
+                # Netzlaufwerk: lokal schreiben, dann am Stück hochladen (Poppler schreibt in vielen kleinen Stücken)
+                import shutil, tempfile
+                fd, local = tempfile.mkstemp(suffix=".pdf")
+                os.close(fd)
+                try:
+                    self.doc.save(GLib.filename_to_uri(local))
+                    shutil.copyfile(local, tmp)
+                finally:
+                    os.remove(local)
+            else:
+                self.doc.save(GLib.filename_to_uri(os.path.abspath(tmp)))
             os.replace(tmp, target)
+            formats._net_cache.pop(target, None)     # gespeicherte Fassung neu lesen
         except (GLib.Error, OSError) as e:
             try:
                 os.remove(tmp)

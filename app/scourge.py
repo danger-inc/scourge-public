@@ -693,6 +693,17 @@ class Tab(Gtk.Box):
         self.info_btn.add_css_class("pb"); self.info_btn.add_css_class("small")
         self.info_btn.connect("toggled", lambda b: self.info_scroll.set_visible(b.get_active()))
         self.pdf_view.add_to_bar(self.info_btn)
+        # Arbeitsfläche: PDF + Werkzeuge füllen das ganze Fenster (Kopf-/Statuszeile, Tab-Leiste, Infospalte weg)
+        self.focused = False
+        self.focus_btn = Gtk.ToggleButton(label="󰊓", focus_on_click=False,
+                                          tooltip_text="Arbeitsfläche: PDF im ganzen Fenster (F11, Esc beendet)")
+        self.focus_btn.add_css_class("pb"); self.focus_btn.add_css_class("small")
+        self.focus_btn.connect("toggled", lambda b: self.set_focus_mode(b.get_active()))
+        self.pdf_view.add_to_bar(self.focus_btn)
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", lambda _c, kv, _code, _m: self.focused and kv == Gdk.KEY_Escape
+                    and (self.set_focus_mode(False), True)[1])
+        self.add_controller(esc)
         self.page_bar = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER, visible=False)
         self.prev_btn = Gtk.Button(label="󰅁", tooltip_text="Vorherige Seite (Bild ↑)")
         self.next_btn = Gtk.Button(label="󰅂", tooltip_text="Nächste Seite (Bild ↓)")
@@ -705,6 +716,7 @@ class Tab(Gtk.Box):
         self.audio_controls = Gtk.MediaControls(visible=False, hexpand=True)
         pv = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=14, margin_bottom=14,
                      margin_start=14, margin_end=14)
+        self.pv = pv
         pv.append(self.preview_stack); pv.append(self.page_bar); pv.append(self.audio_controls)
         self.drop.set_child(pv)
         self.doc = None
@@ -763,6 +775,8 @@ class Tab(Gtk.Box):
         return self.stack.get_visible_child_name() or "home"
 
     def on_page_changed(self):
+        if getattr(self, "focused", False) and not self.can_focus_pdf():
+            self.set_focus_mode(False)
         page = self.page()
         has_file = self.image is not None or getattr(self, "doc", None) is not None
         self.bar.set_visible(page != "home")  # auf der Startseite übernimmt die große Überschrift
@@ -1055,7 +1069,37 @@ class Tab(Gtk.Box):
             return self.fail(f"Datei konnte nicht gelesen werden: {e.strerror}")
         self.load_bytes(data, path)
 
+    def can_focus_pdf(self):
+        return self.page() == "main" and self.preview_stack.get_visible_child_name() == "pdf"
+
+    def set_focus_mode(self, on):
+        """PDF-Arbeitsfläche ein/aus (nur innerhalb des Fensters, kein echtes Vollbild)."""
+        on = bool(on) and self.can_focus_pdf()
+        if self.focus_btn.get_active() != on:
+            self.focus_btn.set_active(on)       # löst toggled → hierher zurück aus
+            return
+        if on == self.focused:
+            return
+        self.focused = on
+        self.focus_btn.set_label("󰊔" if on else "󰊓")
+        self.bar.set_visible(not on)
+        self.info_btn.set_visible(not on)
+        self.info_scroll.set_visible(not on and self.info_btn.get_active())
+        if on:
+            self._badge_was = self.video_badge.get_visible()
+            self.video_badge.set_visible(False)
+        elif getattr(self, "_badge_was", False):
+            self.video_badge.set_visible(True)
+        m = 4 if on else 14
+        for side in ("top", "bottom", "start", "end"):
+            getattr(self.pv, f"set_margin_{side}")(m)
+        self.app_main.apply_chrome()
+        if on:
+            self.pdf_view.grab_focus()
+
     def reset_preview(self):
+        if getattr(self, "focused", False):
+            self.set_focus_mode(False)
         self._audio_token = getattr(self, "_audio_token", 0) + 1  # laufende Umwandlung verwerfen
         if hasattr(self, "info_scroll"):
             self.info_scroll.set_visible(True)
@@ -1074,9 +1118,15 @@ class Tab(Gtk.Box):
         Versionen, verstecktem Text usw. dauert bei dicken PDFs Sekunden), andere Formate nach der Analyse."""
         token = self._doc_token = getattr(self, "_doc_token", 0) + 1
         pdf = None
+        if formats.is_remote(path) and not getattr(self, "_net_loaded", None) == path:
+            return self._fetch_remote(path, token)
+        self._net_loaded = None
         try:
-            with open(path, "rb") as fh:
-                is_pdf = fh.read(5) == b"%PDF-" or path.lower().endswith(".pdf")
+            if formats.is_remote(path):
+                is_pdf = formats.file_bytes(path)[:5] == b"%PDF-" or path.lower().endswith(".pdf")
+            else:
+                with open(path, "rb") as fh:
+                    is_pdf = fh.read(5) == b"%PDF-" or path.lower().endswith(".pdf")
         except OSError as e:
             return self.fail(f"Datei konnte nicht gelesen werden: {e.strerror}")
         if is_pdf:
@@ -1106,6 +1156,31 @@ class Tab(Gtk.Box):
             note.add_css_class("note")
             self.card("Analyse").append(note)
         self._analyze_async(path, token, keep_view=pdf is not None)
+
+    def _fetch_remote(self, path, token):
+        """Netzlaufwerk (z. B. ZIH über VPN): Datei einmal im Hintergrund holen, Oberfläche bleibt bedienbar."""
+        import threading
+        self.set_title(os.path.basename(path), "wird vom Netzlaufwerk geladen …")
+        self.notify(f"Lade {os.path.basename(path)} vom Netzlaufwerk …")
+
+        def work():
+            try:
+                formats.file_bytes(path)
+                err = None
+            except OSError as e:
+                err = e
+
+            def done():
+                if token != getattr(self, "_doc_token", 0):
+                    return False
+                if err is not None:
+                    self.fail(f"Datei konnte nicht gelesen werden: {err.strerror or err}")
+                else:
+                    self._net_loaded = path
+                    self.load_document(path)
+                return False
+            GLib.idle_add(done)
+        threading.Thread(target=work, daemon=True).start()
 
     def _analyze_async(self, path, token, keep_view=False):
         import threading
@@ -1629,6 +1704,7 @@ class Scourge(Gtk.Application):
                                ("new_tab", lambda *_: self.new_tab(), ["<Control>t"]),
                                ("close_tab", lambda *_: self.close_tab(), ["<Control>w"]),
                                ("home", lambda *_: cur().go_home(), ["<Alt>Home"]),
+                               ("pdf_focus", lambda *_: cur().set_focus_mode(not cur().focused), ["F11"]),
                                ("quit", lambda *_: self.win.close(), ["<Control>q"])):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", cb)
@@ -1672,6 +1748,7 @@ class Scourge(Gtk.Application):
         right.append(close)
         self.notebook.set_action_widget(right, Gtk.PackType.END)
         self.notebook.connect("switch-page", lambda nb, page, i: GLib.idle_add(lambda: (self.sync_actions(page, force=True), False)[-1]))
+        self.notebook.connect("switch-page", lambda nb, page, i: GLib.idle_add(lambda: (self.apply_chrome(), False)[-1]))
         for sig in ("page-added", "page-removed", "page-reordered"):
             self.notebook.connect(sig, lambda *_: GLib.idle_add(lambda: (self.number_tabs(), False)[-1]))
 
@@ -1693,10 +1770,18 @@ class Scourge(Gtk.Application):
                                            vscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True)
         status_scroll.set_child(status)
         root.append(status_scroll)
+        self.status_scroll = status_scroll
         # schmales Fenster: Tastenhinweise ausblenden (wie bei datist/musicalist)
         self.win.add_tick_callback(lambda w, _c: (self.hints.get_visible() != (w.get_width() >= 980)
                                                   and self.hints.set_visible(w.get_width() >= 980), True)[-1])
         self.new_tab()
+
+    def apply_chrome(self):
+        """Kopf- und Statuszeile nur zeigen, wenn der aktive Tab nicht in der PDF-Arbeitsfläche ist."""
+        tab = self.current()
+        show = not getattr(tab, "focused", False)
+        self.notebook.set_show_tabs(show)
+        self.status_scroll.set_visible(show)
 
     # ---------- Tabs ----------
     def tabs(self):
