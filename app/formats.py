@@ -185,6 +185,8 @@ def run(cmd, timeout=60, binary=False):
 # ======================================================================
 NET_FS = ("fuse.gvfsd-fuse", "cifs", "smb3", "nfs", "nfs4", "fuse.sshfs", "davfs", "fuse.rclone", "9p")
 _net_cache = {}          # Pfad → (mtime, größe, bytes) – Netz-Dateien nur einmal übers Netz holen
+# zum Nachstellen von „PDF (geschützt)“ auf SMB (trat zuerst bei Lukas' Abgabe auf): SCOURGE_NET_TEST=1
+_NET_TEST_PDF = "/run/user/1000/gvfs/smb-share:server=fs.tu-berlin.de,share=home/lhoernig/Ana2/blatt07_abgabe.pdf"
 
 
 def is_remote(path):

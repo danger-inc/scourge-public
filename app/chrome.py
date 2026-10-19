@@ -236,3 +236,125 @@ class Card(Gtk.Box):
             cr.close_path()
         cr.stroke()
         snap.restore()
+
+
+def _track_handlers():
+    """GObject.connect merkt sich je Objekt die IDs der Python-Handler, damit release_tree genau diese trennt.
+    (Alle Handler zu löschen träfe auch GTK-eigene – GTK warnt dann beim Abbau „no handler with id“.)"""
+    from gi.repository import GObject
+    if getattr(GObject.Object, "_tracks_handlers", False):
+        return
+    for name in ("connect", "connect_after"):
+        orig = getattr(GObject.Object, name)
+
+        def wrapped(self, *args, _orig=orig, **kw):
+            hid = _orig(self, *args, **kw)
+            try:
+                self.__dict__.setdefault("_py_handler_ids", []).append(hid)
+            except AttributeError:
+                pass
+            return hid
+        setattr(GObject.Object, name, wrapped)
+    GObject.Object._tracks_handlers = True
+
+
+_track_handlers()
+
+
+def _drop_handlers(obj):
+    from gi.repository import GObject
+    ids = obj.__dict__.pop("_py_handler_ids", None) if hasattr(obj, "__dict__") else None
+    for hid in ids or ():
+        try:
+            if GObject.signal_handler_is_connected(obj, hid):
+                obj.disconnect(hid)
+        except Exception:
+            pass
+
+
+def release_tree(root, keep_root_dict=False):
+    """Widget-Baum eines geschlossenen Fensters/Tabs wirklich freigeben.
+    PyGObject-Falle: Signal-Handler, Zeichenfunktionen und Attribute der Kind-Widgets zeigen per Lambda/
+    gebundener Methode auf Fenster/Tab zurück. Diese Kreise laufen über C-Referenzen, die Pythons GC nicht
+    sieht – ohne Aufräumen bleibt alles samt Bildern für immer im Speicher. Getrennt werden nur die eigenen
+    (Python-)Handler, GTK-interne bleiben. Danach ist der Baum unbrauchbar."""
+    from gi.repository import GObject
+    nodes, stack = [], [root]
+    while stack:
+        w = stack.pop()
+        nodes.append(w)
+        c = w.get_first_child()
+        while c is not None:
+            stack.append(c)
+            c = c.get_next_sibling()
+    for w in nodes:
+        objs = [w]
+        try:
+            ctrls = w.observe_controllers()
+            objs += [ctrls.get_item(i) for i in range(ctrls.get_n_items())]
+        except Exception:
+            pass
+        # keine Modelle: die können mehrere Fenster teilen
+        for getter in ("get_adjustment", "get_hadjustment", "get_vadjustment", "get_buffer", "get_factory",
+                       "get_popover", "get_sorter"):
+            fn = getattr(w, getter, None)
+            if fn is None:
+                continue
+            try:
+                o = fn()
+            except Exception:
+                continue
+            if isinstance(o, GObject.Object):
+                objs.append(o)
+        if isinstance(w, Gtk.ColumnView):                    # Spalten haben eigene Zellen-Fabriken
+            cols = w.get_columns()
+            for i in range(cols.get_n_items()):
+                col = cols.get_item(i)
+                objs += [col, col.get_factory()]
+        if hasattr(w, "list_actions") and hasattr(w, "lookup_action"):     # eigene Aktionen (win.* …)
+            try:
+                objs += [w.lookup_action(n) for n in w.list_actions()]
+            except Exception:
+                pass
+        try:
+            for prefix in w.list_action_prefixes():
+                grp = w.get_action_group(prefix)
+                if grp is not None and hasattr(grp, "lookup_action"):
+                    objs += [grp.lookup_action(n) for n in grp.list_actions()]
+        except Exception:
+            pass
+        for o in objs:
+            if o is not None:
+                _drop_handlers(o)
+        if isinstance(w, Gtk.DrawingArea):
+            try:
+                w.set_draw_func(None)
+            except Exception:
+                pass
+        if isinstance(w, (Gtk.FlowBox, Gtk.ListBox)):
+            for setter in ("set_sort_func", "set_filter_func"):
+                try:
+                    getattr(w, setter)(None)
+                except Exception:
+                    pass
+        d = getattr(w, "__dict__", None)
+        if d and not (keep_root_dict and w is root):
+            d.clear()
+    # zuletzt die Listen leeren: GTK baut die (jetzt handlerlosen) Zeilen ab
+    for w in nodes:
+        if isinstance(w, (Gtk.ListView, Gtk.GridView, Gtk.ColumnView)):
+            try:
+                w.set_model(None)
+            except Exception:
+                pass
+
+
+def trim_memory():
+    """Freigegebenen Speicher an das System zurückgeben (glibc behält ihn sonst für spätere Anfragen)."""
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass                       # kein glibc (z. B. Windows/musl): egal

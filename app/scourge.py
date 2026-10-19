@@ -1583,6 +1583,16 @@ class Scourge(Gtk.Application):
             return
         getattr(glass, "bring_here", lambda w: None)(self.win)   # offen auf anderem Arbeitsbereich → hierher holen
         self.win.present()
+        if not getattr(self, "_news_told", False):     # nach einem Update einmal Bescheid sagen
+            self._news_told = True
+            try:
+                import changelog
+                import drawer
+                if changelog.check_new("scourge", drawer.version()):
+                    GLib.timeout_add(700, lambda: (self.notify(f"Neu in scourge v{drawer.version()} – changelog "
+                                                               "unten in der Apps-Leiste (Klick auf „scourge“)"), False)[-1])
+            except Exception as e:
+                print("changelog:", e, file=sys.stderr)
 
     def _prewarm(self):
         """Im Hintergrund schon mal laden, was beim ersten Öffnen einer Datei sonst Zeit kostet."""
@@ -1833,9 +1843,14 @@ class Scourge(Gtk.Application):
         if not force and tab.pdf_view.dirty:
             return self.confirm_unsaved([tab], lambda: self.close_tab(tab, force=True))
         tab.shutdown()
+        label = self.notebook.get_tab_label(tab)       # Reiter mit ✕ – liegt außerhalb des Tab-Baums
         self.notebook.remove_page(self.notebook.page_num(tab))
         if self.notebook.get_n_pages() == 0:
             self.new_tab()
+        # erst nach dem sicheren Schließen der Videos (cutter.retire_media: 3 s + 2 s) die Kreise lösen,
+        # sonst bliebe der Tab samt Bildern für immer im Speicher (siehe chrome.release_tree)
+        GLib.timeout_add_seconds(6, lambda: (ch.release_tree(tab), label and ch.release_tree(label),
+                                             ch.trim_memory(), False)[-1])
 
     def update_tab_label(self, tab):
         if getattr(tab, "_tab_label", None):

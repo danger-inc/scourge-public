@@ -1,6 +1,6 @@
 # Linke App-Leiste: öffnet sich, wenn die Maus an den linken Fensterrand fährt (schließt beim Verlassen),
 # oder per Klick auf den „scourge“-Chip oben links (bleibt dann offen bis zum nächsten Klick/Esc/Klick daneben).
-# Von dort startet man die anderen eigenen Apps (alle auch auf GitHub unter invincible-nix).
+# Von dort startet man die anderen eigenen Apps; unten steht der Changelog.
 import json
 import os
 import shutil
@@ -16,7 +16,17 @@ APPS = (
     ("filist", "󰉋", "filist", "Dateien & Ordner"),
     ("musicalist", "󰝚", "musicalist", "YouTube Music"),
     ("datist", "󰸗", "datist", "Kalender"),
+    ("wallpapaer", "󰸉", "wallpapaer", "Hintergründe für Super+W"),
 )
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def version():
+    try:
+        return open(os.path.join(HERE, "VERSION")).read().strip()
+    except OSError:
+        return ""
 
 EDGE = 6          # Breite der unsichtbaren Fühlkante am linken Rand
 WIDTH = 236
@@ -156,6 +166,23 @@ class AppDrawer(Gtk.Box):
             b.connect("clicked", lambda *_: self.open_publish())
             panel.append(b)
         panel.append(Gtk.Box(vexpand=True))
+        b = Gtk.Button(focus_on_click=False, tooltip_text="Was ist neu in scourge?")
+        b.add_css_class("applink")
+        row = Gtk.Box(spacing=10)
+        ic = Gtk.Label(label="󰋚", xalign=0.5)
+        ic.add_css_class("app-icon")
+        txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        n = Gtk.Label(label="changelog", xalign=0)
+        n.add_css_class("app-name")
+        d = Gtk.Label(label=f"scourge v{version()}", xalign=0)
+        d.add_css_class("app-desc")
+        txt.append(n)
+        txt.append(d)
+        row.append(ic)
+        row.append(txt)
+        b.set_child(row)
+        b.connect("clicked", lambda *_: self.open_changelog())
+        panel.append(b)
         text = ("klick auf „scourge“ blendet die leiste aus" if pinned
                 else "klick auf „scourge“ heftet die leiste an · esc schließt")
         hint = Gtk.Label(label=text, xalign=0, wrap=True, max_width_chars=24, width_chars=24)
@@ -243,6 +270,12 @@ class AppDrawer(Gtk.Box):
             self.close()
             return True
         return False
+
+    def open_changelog(self):
+        self.close()
+        import changelog
+        changelog.open_window(self.app.win, "scourge", os.path.join(HERE, "CHANGELOG.md"), key="scourge",
+                              version=version())
 
     def open_publish(self):
         import publish
