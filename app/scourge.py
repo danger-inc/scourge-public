@@ -1696,7 +1696,7 @@ class Scourge(Gtk.Application):
         self.monitor.connect("changed", lambda *_: GLib.timeout_add(150, lambda: self.load_css() and False))
 
         self.win = Gtk.ApplicationWindow(application=self, title="Scourge")
-        self.win.set_default_size(1200, 780)
+        self.win.set_default_size(*getattr(glass, "fit_size", lambda w, h: (w, h))(1200, 780))   # kleine Bildschirme
         getattr(glass, "frame_window", lambda w: w.set_decorated(False))(self.win)   # Kachel-WM: rahmenlos
         self.win.add_css_class("pb-window")
         self.win.connect("close-request", self.on_close_request)

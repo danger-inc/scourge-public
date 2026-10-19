@@ -40,6 +40,20 @@ def tiling_desktop():
     return any(d in desk for d in ("hyprland", "sway", "river", "niri", "wayfire", "i3", "bspwm", "qtile"))
 
 
+def fit_size(w, h):
+    """Startgröße auf den Bildschirm begrenzen (kleine Laptops, z. B. 1366×768: sonst ragt das Fenster über den
+    Rand). Kachel-WMs bestimmen die Größe ohnehin selbst."""
+    try:
+        from gi.repository import Gdk
+        mons = Gdk.Display.get_default().get_monitors()
+        if mons.get_n_items():
+            g = mons.get_item(0).get_geometry()
+            w, h = min(w, int(g.width * 0.92)), min(h, int(g.height * 0.86))
+    except Exception:   # noqa: BLE001 – ohne Bildschirm-Info einfach die Wunschgröße
+        pass
+    return w, h
+
+
 def frame_window(win):
     """Kachel-WM: rahmenlos (Rahmen und Rundung kommen vom Compositor). Sonst: GTK-Rahmen mit Schatten und
     Größenänderung, aber ohne zusätzliche Titelleiste – verschoben wird über die eigene Kopfzeile."""
