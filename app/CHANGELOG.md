@@ -1,5 +1,13 @@
 # scourge – Änderungen
 
+## 2.7.0 (2026-10-20)
+- **Suite-Apps verwalten** (Startseite → software → Suite-Apps): Jede App zeigt jetzt, ob sie läuft, seit wann,
+  wie viel Arbeitsspeicher sie braucht und ob ein Fenster offen ist. Dazu Knöpfe zum **Neustarten** und
+  **Beenden** (auch den unsichtbaren Hintergrund-Prozess), das **Protokoll** der letzten Ausgaben zur Fehlersuche
+  und **Cache leeren** (Vorschaubilder und Zwischendateien, gesicherte PDF-Originale bleiben). Ist ein Fenster
+  der App offen, fragt scourge vor dem Beenden einmal nach.
+- Der Knopf „ordner öffnen“ bei den eigenen Icons ist weg – „icon wählen“ bei der App macht dasselbe direkter.
+
 ## 2.6.1 (2026-10-20)
 - **Windows: kein Glas-Effekt mehr.** Der Knopf „durchsichtig“ ließ scourge unter Windows einfrieren, und weil
   die Einstellung gespeichert blieb, half auch Neuinstallieren nicht. Unter Windows ist der Knopf jetzt weg,

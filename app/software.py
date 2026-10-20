@@ -5,6 +5,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -130,6 +132,147 @@ SUITE = [
 ]
 
 
+# Verwaltung je App: Prozess (Regex auf die Befehlszeile), Protokoll, Cache (Ordner + was dort bleiben muss),
+# Repo und wie neu gestartet wird ("self" = scourge selbst, Liste = Befehl im Hintergrund, None = beenden + öffnen).
+RUN = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+ADMIN = {
+    "scourge": dict(proc=r"/scourge/scourge\.py", log=f"{RUN}/scourge.log", restart="self",
+                    cache=("~/.cache/scourge", ("originale", "versionen")), repo="~/Projects/scourge"),
+    "notist": dict(proc=r"/notes/app/notes\.py", restart=["notist", "--daemon"],
+                   cache=("~/.cache/notes", ()), repo="~/Projects/notist"),
+    "filist": dict(proc=r"/filist/app/filist\.py", log=f"{RUN}/filist.log", unit="filist.service",
+                   restart=["filist", "--daemon"], repo="~/Projects/filist"),
+    "musicalist": dict(proc=r"/rice-apps/music/musicd\.py", log=f"{RUN}/rice-music.log",
+                       restart=["rice-music", "--daemon"], repo="~/Projects/musicalist"),
+    "datist": dict(proc=r"/rice-apps/calendar/ui\.py", restart=None, repo="~/Projects/datist"),
+    "wallist": dict(proc=r"/wallist/wallist\.py", restart=None,
+                    cache=("~/.cache/wallist/thumbs", ()), repo="~/Projects/wallist"),
+}
+
+
+def procs(pattern):
+    """[(pid, rss_bytes, laufzeit_s)] aller Prozesse, deren Befehlszeile auf pattern passt."""
+    rx = re.compile(pattern)
+    out = []
+    try:
+        hz = os.sysconf("SC_CLK_TCK")
+        up = float(open("/proc/uptime").read().split()[0])
+    except (OSError, ValueError):
+        hz, up = 100, 0
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            cmd = open(f"/proc/{d}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+            if not rx.search(cmd) or "sh -c" in cmd:
+                continue
+            stat = open(f"/proc/{d}/stat").read().rsplit(")", 1)[1].split()
+            rss = int(stat[21]) * os.sysconf("SC_PAGE_SIZE")
+            out.append((int(d), rss, max(0, up - int(stat[19]) / hz)))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def window_pids():
+    """PIDs mit sichtbarem Fenster (Hyprland); ohne Hyprland leer."""
+    if not shutil.which("hyprctl"):
+        return set()
+    try:
+        import json
+        r = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
+        return {c.get("pid") for c in json.loads(r.stdout or "[]")}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return set()
+
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit in ("B", "KB") else f"{n:.1f} {unit}".replace(".", ",")
+        n /= 1024
+
+
+def duration(s):
+    s = int(s)
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min"
+    if s < 86400:
+        return f"{s // 3600} h {s % 3600 // 60:02d} min"
+    return f"{s // 86400} d {s % 86400 // 3600} h"
+
+
+def cache_entries(spec):
+    """Was „cache leeren“ löschen darf: alles im Ordner außer den geschützten Einträgen."""
+    if not spec:
+        return []
+    d, keep = spec
+    d = os.path.expanduser(d)
+    try:
+        return [os.path.join(d, n) for n in os.listdir(d) if n not in keep]
+    except OSError:
+        return []
+
+
+def du(paths):
+    total = 0
+    for p in paths:
+        if os.path.isfile(p) or os.path.islink(p):
+            total += os.lstat(p).st_size
+            continue
+        for root, _dirs, files in os.walk(p):
+            for f in files:
+                try:
+                    total += os.lstat(os.path.join(root, f)).st_size
+                except OSError:
+                    pass
+    return total
+
+
+def unit_exists(unit):
+    return bool(unit) and shutil.which("systemctl") and subprocess.run(
+        ["systemctl", "--user", "cat", unit], capture_output=True, timeout=3).returncode == 0
+
+
+def repo_info(path):
+    """(Web-Adresse, letzter Commit als Text) des lokalen Repos oder None."""
+    path = os.path.expanduser(path or "")
+    if not path or not os.path.isdir(os.path.join(path, ".git")):
+        return None
+    try:
+        url = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True, text=True,
+                             timeout=3).stdout.strip()
+        ts = subprocess.run(["git", "-C", path, "log", "-1", "--format=%ct"], capture_output=True, text=True,
+                            timeout=3).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.match(r"(?:git@|https://)([^:/]+)[:/](.+?)(?:\.git)?$", url)
+    web = f"https://{m.group(1)}/{m.group(2)}" if m else None
+    when = time.strftime("%d.%m. %H:%M", time.localtime(int(ts))) if ts else ""
+    return web, when
+
+
+def stop(pattern, wait=3.0):
+    """Prozesse höflich beenden (TERM), hängen sie, hart (KILL). Läuft im Hintergrund-Thread."""
+    pids = [p for p, _r, _t in procs(pattern) if p != os.getpid()]
+    for p in pids:
+        try:
+            os.kill(p, 15)
+        except OSError:
+            pass
+    end = time.time() + wait
+    while pids and time.time() < end:
+        time.sleep(0.1)
+        pids = [p for p in pids if os.path.exists(f"/proc/{p}")]
+    for p in pids:
+        try:
+            os.kill(p, 9)
+        except OSError:
+            pass
+
+
 def bin_path(cmd):
     local = os.path.expanduser(f"~/.local/bin/{cmd}")
     return local if os.access(local, os.X_OK) else shutil.which(cmd)
@@ -239,34 +382,63 @@ def icon_widget(key, glyph, size=48):
     return l
 
 
+ADMIN_CSS = """
+separator.adm-sep { background: alpha(@primary, 0.15); min-height: 1px; margin: 2px 0; }
+flowbox.adm-flow > flowboxchild { padding: 0; background: none; }
+textview.adm-log, textview.adm-log text { background: none; color: @foreground; font-size: 11px; }
+"""
+_admin_css = None
+
+
 class SuiteApps(ToolPage):
     title = "Suite-Apps"
     subtitle = ""
     privacy = "Startet nur die eigenen Apps und ändert lokale Einstellungen (Icons, Autostart). Nichts verlässt das Gerät."
 
     def build(self):
+        global _admin_css
+        if _admin_css is None:                  # einmal pro Prozess, nicht pro geöffneter Seite
+            _admin_css = Gtk.CssProvider()
+            _admin_css.load_from_string(ADMIN_CSS)
+            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), _admin_css,
+                                                      Gtk.STYLE_PROVIDER_PRIORITY_USER)
         c = self.card("eigene icons")
         t = Gtk.Label(label=f"Eigene Icons: lege <app>.svg oder <app>.png (z. B. notist.svg) in "
                             f"{icons.CUSTOM.replace(os.path.expanduser('~'), '~')} – scourge schreibt sie als "
                             "App-Symbol ins System (Starter, Taskleiste, Fenster) und beim Start erneut, falls ein "
-                            "Update das Logo überschrieben hat. Oder unten bei der App „icon wählen“.",
+                            "Update das Logo überschrieben hat. Oder unten bei der App „icon wählen“. Beim "
+                            "Veröffentlichen kommt das eigene Icon mit ins Repo (Logo und Windows-Symbol).",
                       xalign=0, wrap=True)
         t.add_css_class("note")
         c.append(t)
         row = Gtk.Box(spacing=8)
-        row.append(self.button("󰉋 ordner öffnen", self.open_icon_dir, small=True))
         row.append(self.button("󰑐 jetzt anwenden", self.apply_all, "Alle Icons aus dem Ordner übernehmen", small=True))
         c.append(row)
         self.cards = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.box.append(self.cards)
+        self.admin = {}
+        self._tick = 0
+        self.connect("map", lambda *_: self._watch(True))
+        self.connect("unmap", lambda *_: self._watch(False))
         self.fill()
+
+    def _watch(self, on):
+        """Prozess-Status alle 3 s auffrischen, solange die Seite sichtbar ist."""
+        if self._tick:
+            GLib.source_remove(self._tick)
+            self._tick = 0
+        if on:
+            self.update_status()
+            self._tick = GLib.timeout_add_seconds(3, lambda: (self.update_status(), True)[-1])
 
     def fill(self):
         while (w := self.cards.get_first_child()):
             self.cards.remove(w)
+        self.admin = {}
         text = hypr_text()
         for key, glyph, name, desc, start, settings, ver, cfg in SUITE:
             self.app_card(key, glyph, name, desc, start, settings, ver, cfg, text)
+        self.update_status()
 
     def app_card(self, key, glyph, name, desc, start, settings, ver, cfg, text):
         installed = key == "scourge" or (start and bin_path(start[0]))
@@ -326,6 +498,224 @@ class SuiteApps(ToolPage):
         if os.path.isdir(os.path.expanduser(cfg)):
             row.append(self.button("󰉋", lambda p=cfg: self.open_dir(p), "Daten-/Einstellungsordner öffnen", small=True))
         c.append(row)
+        if key in ADMIN and installed:
+            self.admin_rows(c, key, name, start)
+
+    # ---------- Verwaltung ----------
+    def admin_rows(self, c, key, name, start):
+        a = ADMIN[key]
+        w = {"name": name, "start": start}
+        self.admin[key] = w
+        sep = Gtk.Separator()
+        sep.add_css_class("adm-sep")
+        c.append(sep)
+        st = Gtk.Label(xalign=0, wrap=True)
+        st.add_css_class("note")
+        w["status"] = st
+        c.append(st)
+        fl = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=8, row_spacing=6,
+                         max_children_per_line=12, homogeneous=False)
+        fl.add_css_class("adm-flow")
+        c.append(fl)
+
+        def add(b):
+            fl.append(b)
+            b.get_parent().set_focusable(False)
+            return b
+        tip = ("scourge schließt sich und ist gleich wieder da" if a["restart"] == "self" else
+               "Beenden und frisch im Hintergrund starten" if a["restart"] else "Beenden und neu öffnen")
+        w["restart"] = add(self.button("󰜉 neu starten", lambda: self.restart(key), tip, small=True))
+        if a["restart"] != "self":
+            w["stop"] = add(self.button("󰓛 beenden", lambda: self.stop_app(key), "Prozess beenden (auch den "
+                                        "unsichtbaren Hintergrund-Prozess)", small=True))
+        if a.get("log") or a.get("unit"):
+            w["log_btn"] = add(self.button("󰦪 protokoll", lambda: self.toggle_log(key),
+                                           "Letzte Ausgaben der App (Fehlersuche)", small=True))
+        entries = cache_entries(a.get("cache"))
+        size = du(entries)
+        if size:
+            w["cache"] = add(self.button(f"󰃢 cache leeren · {human(size)}", lambda: self.clear_cache(key),
+                                         "Vorschaubilder/Zwischendateien löschen – werden bei Bedarf neu erzeugt",
+                                         small=True))
+        info = repo_info(a.get("repo"))
+        if info:
+            web, when = info
+            if web:
+                add(self.button("󰊤 github", lambda u=web: Gio.AppInfo.launch_default_for_uri(u, None),
+                                f"{web} im Browser öffnen" + (f" · zuletzt hochgeladen {when}" if when else ""),
+                                small=True))
+            if self.publish_page():
+                add(self.button("󰅧 veröffentlichen", self.open_publish, "Änderungen (auch das eigene Icon) prüfen "
+                                "und auf GitHub hochladen", small=True))
+            w["repo"] = when
+        rev = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN)
+        tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        tv.add_css_class("adm-log")
+        sc = Gtk.ScrolledWindow(min_content_height=120, max_content_height=260, propagate_natural_height=True)
+        sc.set_child(tv)
+        rev.set_child(sc)
+        c.append(rev)
+        w["log"] = (rev, tv)
+
+    @staticmethod
+    def publish_page():
+        try:
+            import publish
+        except ImportError:                     # öffentliche Ausgabe: ohne Veröffentlichen-Seite
+            return None
+        return publish if publish.available() else None
+
+    def open_publish(self):
+        publish = self.publish_page()
+        if publish:
+            self.tab.open_page("tool-publish", lambda: publish.PublishPage(self.tab))
+
+    def update_status(self, only=None):
+        if not self.admin:
+            return
+        wins = window_pids()
+        for key, w in self.admin.items():
+            if only and key != only:
+                continue
+            ps = procs(ADMIN[key]["proc"])
+            w["running"] = bool(ps)
+            w["windows"] = sum(1 for p, _r, _t in ps if p in wins)
+            if ps:
+                rss = sum(r for _p, r, _t in ps)
+                parts = [f"● läuft seit {duration(max(t for _p, _r, t in ps))}", human(rss) + " RAM"]
+                if w["windows"]:
+                    parts.append("fenster offen")
+                elif key != "scourge":
+                    parts.append("im hintergrund")
+            else:
+                parts = ["○ läuft nicht"]
+            if w.get("repo"):
+                parts.append(f"zuletzt hochgeladen {w['repo']}")
+            w["status"].set_label("   ·   ".join(parts))
+            if "stop" in w and not w.get("armed"):
+                w["stop"].set_sensitive(bool(ps))
+
+    def _confirm(self, key, btn, label, action):
+        """Bei offenem Fenster erst nach zweitem Klick – sonst geht ein offenes Fenster ungefragt verloren."""
+        w = self.admin[key]
+        if w.get("armed") == btn:
+            btn.set_label(w.pop("armed_label"))
+            w["armed"] = None
+            return action()
+        if not w.get("windows"):
+            return action()
+        w["armed"], w["armed_label"] = btn, btn.get_label()
+        btn.set_label(f"{label}? fenster ist offen – nochmal klicken")
+
+        def reset():
+            if w.get("armed") == btn:
+                w["armed"] = None
+                btn.set_label(w.pop("armed_label"))
+            return False
+        GLib.timeout_add_seconds(4, reset)
+
+    def _bg(self, key, work, msg):
+        w = self.admin[key]
+        for k in ("restart", "stop"):
+            if k in w:
+                w[k].set_sensitive(False)
+
+        def run():
+            try:
+                work()
+            finally:
+                GLib.idle_add(done)
+
+        def done():
+            for k in ("restart", "stop"):
+                if k in w:
+                    w[k].set_sensitive(True)
+            self.tab.notify(msg)
+            GLib.timeout_add(1200, lambda: (self.update_status(key), False)[-1])
+            return False
+        threading.Thread(target=run, daemon=True).start()
+
+    def stop_app(self, key):
+        w = self.admin[key]
+        self._confirm(key, w["stop"], "beenden",
+                      lambda: self._bg(key, lambda: stop(ADMIN[key]["proc"]), f"{w['name']} beendet"))
+
+    def restart(self, key):
+        a, w = ADMIN[key], self.admin[key]
+        if a["restart"] == "self":
+            exe = bin_path("scourge")
+            if not exe:
+                return
+            # neuer Start erst, wenn dieser Prozess weg ist (sonst nimmt die alte Instanz den Aufruf an)
+            subprocess.Popen(["sh", "-c", 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', exe,
+                              str(os.getpid())], start_new_session=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.tab.notify("scourge startet neu …")
+            GLib.timeout_add(300, lambda: (Gio.Application.get_default().activate_action("quit", None), False)[-1])
+            return
+
+        def work():
+            if unit_exists(a.get("unit")):
+                subprocess.run(["systemctl", "--user", "restart", a["unit"]], capture_output=True, timeout=15)
+                return
+            stop(a["proc"])
+            run_detached(a["restart"] or w["start"] or [key])
+        self._confirm(key, w["restart"], "neu starten", lambda: self._bg(key, work, f"{w['name']} neu gestartet"))
+
+    def toggle_log(self, key):
+        a, w = ADMIN[key], self.admin[key]
+        rev, tv = w["log"]
+        if rev.get_reveal_child():
+            rev.set_reveal_child(False)
+            return
+        text = ""
+        if a.get("log") and os.path.isfile(a["log"]):
+            try:
+                with open(a["log"], errors="replace") as f:
+                    text = "".join(f.readlines()[-80:])
+            except OSError:
+                pass
+        if not text.strip() and unit_exists(a.get("unit")):
+            try:
+                text = subprocess.run(["journalctl", "--user", "-u", a["unit"], "-n", "80", "--no-pager", "-o", "cat"],
+                                      capture_output=True, text=True, timeout=5).stdout
+            except (OSError, subprocess.SubprocessError):
+                pass
+        noise = re.compile(r"GtkGizmo .* reported min (width|height)|^\s*$")      # harmlose GTK-Warnungen
+        text = "\n".join(l for l in text.splitlines() if not noise.search(l))
+        tv.get_buffer().set_text(text.strip() or "(keine Ausgaben – alles ruhig)")
+        rev.set_reveal_child(True)
+        buf = tv.get_buffer()
+        GLib.idle_add(lambda: (tv.scroll_to_iter(buf.get_end_iter(), 0, False, 0, 0), False)[-1])
+
+    def clear_cache(self, key):
+        w = self.admin[key]
+        btn = w["cache"]
+        if w.get("armed") != btn:
+            w["armed"] = btn
+            old = btn.get_label()
+            btn.set_label("󰃢 wirklich leeren?")
+
+            def reset():
+                if w.get("armed") == btn:
+                    w["armed"] = None
+                    btn.set_label(old)
+                return False
+            GLib.timeout_add_seconds(4, reset)
+            return
+        w["armed"] = None
+        entries = cache_entries(ADMIN[key].get("cache"))
+        freed = du(entries)
+        for p in entries:
+            try:
+                if os.path.isdir(p) and not os.path.islink(p):
+                    shutil.rmtree(p)
+                else:
+                    os.remove(p)
+            except OSError:
+                pass
+        self.tab.notify(f"{w['name']}: {human(freed)} Cache gelöscht")
+        btn.set_visible(False)
 
     def launch(self, argv, name):
         if not run_detached(argv):
@@ -336,9 +726,6 @@ class SuiteApps(ToolPage):
         path = os.path.expanduser(path)
         os.makedirs(path, exist_ok=True)
         Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(path).get_uri(), None)
-
-    def open_icon_dir(self):
-        self.open_dir(icons.CUSTOM)
 
     def apply_all(self):
         changed = icons.apply_all()
