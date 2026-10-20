@@ -122,18 +122,30 @@ if ($App.Fonts -and (Test-Path $App.Fonts)) {
 }
 
 # ------------------------------------------------------------------ Verknüpfungen
+# Windows merkt sich Symbole je Dateipfad (Icon-Cache). Bliebe der Pfad gleich, zeigten Startmenü und Taskleiste
+# nach einem Update mit neuem Logo weiter das alte. Deshalb trägt die Kopie für die Verknüpfung den Inhalts-Hash
+# im Namen: neues Logo = neuer Pfad = neues Symbol.
+$IconPath = Join-Path $App.Dir $App.Icon
+if (Test-Path $IconPath) {
+    $hash = (Get-FileHash $IconPath -Algorithm SHA256).Hash.Substring(0, 8).ToLower()
+    $named = Join-Path (Split-Path $IconPath) ('{0}-{1}.ico' -f [IO.Path]::GetFileNameWithoutExtension($IconPath), $hash)
+    Copy-Item $IconPath $named -Force
+    $IconPath = $named
+}
 function New-Link($path) {
     $ws = New-Object -ComObject WScript.Shell
     $l = $ws.CreateShortcut($path)
     $l.TargetPath = $PyW
     $l.Arguments = '"' + (Join-Path $App.Dir $App.Main) + '"'
     $l.WorkingDirectory = $App.Dir
-    $l.IconLocation = (Join-Path $App.Dir $App.Icon) + ',0'
+    $l.IconLocation = $IconPath + ',0'
     $l.Description = $App.Name
     $l.Save()
 }
 New-Link "$Programs\$Lnk"
 if ((Test-Path "$Desktop\$Lnk") -or (Ask 'Auch eine Verknüpfung auf dem Desktop anlegen?')) { New-Link "$Desktop\$Lnk" }
+# Explorer die Symbole neu einlesen lassen (sonst erst nach Neuanmeldung)
+try { & "$env:SystemRoot\System32\ie4uinit.exe" -show 2>$null | Out-Null } catch { }
 
 # ------------------------------------------------------------------ Selbsttest
 Say 'Prüfe ...'

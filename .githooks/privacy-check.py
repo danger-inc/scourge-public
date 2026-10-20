@@ -29,6 +29,48 @@ SECRETS = [
 OK_MAIL = re.compile(r"@(users\.noreply\.github\.com|example\.(com|org|net)|beispiel\.(de|com|org)|localhost)$", re.I)
 
 
+# Eingebettete Bilder (data:…;base64,… in SVGs) und .ico-Dateien sind Binärdaten: Darin findet die Textsuche
+# zufällig „Tokens“ oder Sperrbegriffe (Fehlalarm). Stattdessen wird geprüft, ob die Bilder Metadaten tragen
+# (Autor, Kamera, Software, GPS …) – nur die könnten Persönliches verraten.
+DATA_URI = re.compile(r"data:([a-z]+/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)", re.I)
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+PNG_META = {b"tEXt", b"iTXt", b"zTXt", b"eXIf"}
+
+
+def image_meta(raw):
+    """Gründe, warum ein Bild Metadaten enthält (leer = nur Pixel)."""
+    found = set()
+    start = raw.find(PNG_SIG)
+    while start != -1:
+        i = start + 8
+        while i + 8 <= len(raw):
+            length = int.from_bytes(raw[i:i + 4], "big")
+            kind = raw[i + 4:i + 8]
+            if kind in PNG_META:
+                found.add("PNG-Metadaten (" + kind.decode() + ")")
+            if kind == b"IEND" or length > len(raw):
+                break
+            i += 12 + length
+        start = raw.find(PNG_SIG, i)
+    if raw[:2] == b"\xff\xd8" and (b"Exif\x00\x00" in raw[:65536] or b"http://ns.adobe.com/xap" in raw[:65536]):
+        found.add("JPEG-Metadaten (EXIF/XMP)")
+    return sorted(found)
+
+
+def strip_images(text):
+    """Base64-Bilder aus dem Text nehmen; liefert (Text ohne Bilddaten, Metadaten-Funde)."""
+    import base64
+    found = []
+
+    def repl(m):
+        try:
+            found.extend(image_meta(base64.b64decode(re.sub(r"\s+", "", m.group(2)))))
+        except ValueError:
+            found.append("eingebettete Daten nicht lesbar")
+        return "data:" + m.group(1) + ";base64,…"
+    return DATA_URI.sub(repl, text), found
+
+
 def personal_terms():
     terms = set()
     try:
@@ -84,7 +126,11 @@ def main():
             continue
         if name.endswith(".ttf"):
             continue
-        text = data.decode("utf-8", "replace")
+        if name.endswith(".ico"):                  # Binärbild: nur auf Metadaten prüfen
+            problems += [(name, m) for m in image_meta(data)]
+            continue
+        text, meta = strip_images(data.decode("utf-8", "replace"))
+        problems += [(name, m) for m in meta]
         low = text.lower()
         for i, line in enumerate(text.splitlines(), 1):
             for rx, what in SECRETS:
