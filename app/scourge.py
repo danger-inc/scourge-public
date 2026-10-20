@@ -1824,6 +1824,7 @@ class Scourge(Gtk.Application):
         from cutter import CUTTER_CSS
         from recorder import RECORDER_CSS
         from studio import STUDIO_CSS
+        from compress import COMPRESS_CSS
         css = FALLBACK_COLORS
         try:
             self._css_src = open(MATUGEN_CSS).read()
@@ -1837,7 +1838,7 @@ class Scourge(Gtk.Application):
             from swipe import CSS as SWIPE_CSS
         except ImportError:
             SWIPE_CSS = ""
-        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
+        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + COMPRESS_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
         for tab in self.tabs():
             if tab.image is not None:
                 tab.swatch.queue_draw()

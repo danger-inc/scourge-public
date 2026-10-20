@@ -23,26 +23,26 @@ FALLBACK = """@define-color background #1a120d; @define-color foreground #f0dfd7
 FONT = "JetBrainsMono Nerd Font"
 
 CSS = """
-window.changelog { background-color: @background; color: @foreground; }
+window.changelog { background-color: @cl_background; color: @cl_foreground; }
 window.changelog * { font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Notes Icons", monospace; }
 window.changelog label { font-size: 13px; }
 window.changelog .cl-top { padding: 10px 14px 6px 14px; }
-window.changelog .cl-brand { background-color: @primary; color: @on_primary; padding: 1px 9px; border-radius: 4px;
+window.changelog .cl-brand { background-color: @cl_primary; color: @cl_on_primary; padding: 1px 9px; border-radius: 4px;
     font-weight: bold; margin-right: 8px; }
 window.changelog .cl-head { font-weight: bold; }
-window.changelog .cl-dim { color: @secondary; }
-window.changelog .cl-accent { color: @primary; font-weight: bold; }
+window.changelog .cl-dim { color: @cl_secondary; }
+window.changelog .cl-accent { color: @cl_primary; font-weight: bold; }
 window.changelog button.cl-close { background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
-    min-width: 0; padding: 1px 6px; border-radius: 4px; color: @foreground; }
-window.changelog button.cl-close:hover { background-color: @tertiary; color: @background; }
+    min-width: 0; padding: 1px 6px; border-radius: 4px; color: @cl_foreground; }
+window.changelog button.cl-close:hover { background-color: @cl_tertiary; color: @cl_background; }
 window.changelog .cl-list { padding: 4px 14px 6px 14px; }
-window.changelog .cl-box { color: alpha(@primary, 0.85); padding: 24px 14px 10px 14px; }
-window.changelog .cl-box.new { color: @primary; }
-window.changelog .cl-box > * { color: @foreground; }
+window.changelog .cl-box { color: alpha(@cl_primary, 0.85); padding: 24px 14px 10px 14px; }
+window.changelog .cl-box.new { color: @cl_primary; }
+window.changelog .cl-box > * { color: @cl_foreground; }
 window.changelog .cl-item { font-size: 12.5px; }
-window.changelog .cl-bullet { color: @primary; font-weight: bold; }
+window.changelog .cl-bullet { color: @cl_primary; font-weight: bold; }
 window.changelog .cl-status { padding: 4px 14px 8px 14px; font-size: 12px; font-weight: bold; }
-window.changelog scrollbar slider { background-color: alpha(@primary, 0.45); min-width: 4px; border-radius: 2px; }
+window.changelog scrollbar slider { background-color: alpha(@cl_primary, 0.45); min-width: 4px; border-radius: 2px; }
 """
 
 
@@ -236,7 +236,11 @@ def _install_css(colors_css=None):
             colors_css = open(MATUGEN_CSS).read()
         except OSError:
             colors_css = ""
-    css += "\n" + colors_css + "\n" + CSS
+    # Alle Farbnamen bekommen das Präfix cl_: @define-color gilt in GTK für das ganze Programm, und dieser
+    # Provider liegt über dem der App – mit den echten Namen fror er deren Farben beim ersten Öffnen ein
+    # (Super+W wirkte danach nicht mehr).
+    css = re.sub(r"@(define-color\s+)?([A-Za-z_][\w-]*)", lambda m: "@" + (m.group(1) or "") + "cl_" + m.group(2),
+                 css + "\n" + colors_css) + "\n" + CSS
     if _provider is None:
         _provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), _provider,

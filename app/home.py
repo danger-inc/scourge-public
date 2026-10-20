@@ -54,6 +54,7 @@ ACTIONS = [
     ("cut", "󰆐", "Video schneiden", "Zeitleiste, Schneiden, Teile entfernen, Export als MP4, WebM oder GIF", True),
     ("meme", "󰏫", "Meme-Editor", "Bild oder Video wählen: Text oben/unten, Stift, Zuschneiden", False),
     ("studio", "󰏘", "Verlauf & ASCII", "Ästhetische Farbverläufe als PNG/JPG – und Bilder als ASCII-Kunst", False),
+    ("compress", "\U000F0044", "Bilder komprimieren", "Viele Bilder auf einmal kleiner: Qualität, Zielgröße, WebP/AVIF", False),
 ]
 
 
@@ -124,7 +125,7 @@ class HomePage(Gtk.ScrolledWindow):
                               "Dateien lassen sich auch einfach hierher ziehen.")
         fl = flow()
         cbs = {"file": tab.on_open, "record": tab.open_recorder, "cut": self.pick_video, "meme": self.pick_meme,
-               "studio": self.open_studio}
+               "studio": self.open_studio, "compress": self.open_compress}
         for key, icon, name, desc, primary in ACTIONS:
             fl.append(card(icon, name, desc, cbs[key], primary))
         box.append(fl)
@@ -219,6 +220,10 @@ class HomePage(Gtk.ScrolledWindow):
     def open_studio(self):
         from studio import StudioPage
         self.tab.open_page("tool-studio", lambda: StudioPage(self.tab))
+
+    def open_compress(self):
+        from compress import CompressPage
+        self.tab.open_page("tool-compress", lambda: CompressPage(self.tab))
 
     def open_software(self, key):
         import software

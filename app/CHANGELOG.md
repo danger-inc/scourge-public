@@ -1,5 +1,15 @@
 # scourge – Änderungen
 
+## 2.6.0 (2026-10-20)
+- **Neu: Bilder komprimieren** (Startseite → misc): viele Bilder auf einmal kleiner machen – Bilder wählen,
+  Ordner wählen oder hineinziehen. Wahlweise nach Qualität oder mit Zielgröße je Bild (z. B. „höchstens 500 KB“),
+  dazu Format wechseln (JPEG, WebP, AVIF, PNG), auf eine längste Seite verkleinern und Metadaten (GPS, Kamera,
+  Datum) entfernen. PNGs werden auf Wunsch mit weniger Farben gespeichert, oft 60–80 % kleiner. Eine Vorschau
+  zeigt das Ergebnis und die neue Größe, bevor du etwas speicherst. Originale bleiben unverändert, die neuen
+  Dateien heißen `…-klein`.
+- **Farben nach Wallpaper-Wechsel**: scourge blieb manchmal in den alten Farben hängen (Knöpfe, Regler, der
+  Chip oben links), sobald einmal das Changelog-Fenster offen gewesen war. Behoben.
+
 ## 2.5.1 (2026-10-20)
 - **Neues Zurück-Wischen im -ist-Design**: Beim Wischen mit zwei Fingern schiebt sich die vorige Seite als Rahmen vom Rand herein – mit einem echten Bild davon und ihrem Namen im Chip. Ist der Rahmen durchgezogen, führt Loslassen zurück, und die Seite klappt über das ganze Fenster auf.
 - Nach dem Zurück-Wischen springt die Seite nicht mehr ein Stück nach oben (der erste Millimeter der Geste scrollte noch mit und lief nach).
