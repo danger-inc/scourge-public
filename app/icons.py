@@ -20,6 +20,7 @@ SUITE = {
     "musicalist": ("musicalist", "de.invincible.Music.desktop"),
     "datist": ("datist", "datist.desktop"),
     "wallist": ("wallist", "wallist.desktop"),
+    "mailist": ("mailist", "mailist.desktop"),
 }
 EXTS = (".svg", ".png")
 

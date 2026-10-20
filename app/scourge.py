@@ -1685,6 +1685,7 @@ class Scourge(Gtk.Application):
             except Exception as e:
                 print("changelog:", e, file=sys.stderr)
 
+
     def show_changelog(self):
         self.drawer.open_changelog()
         self.ver_btn.remove_css_class("news")

@@ -17,6 +17,7 @@ APPS = (
     ("musicalist", "󰝚", "musicalist", "YouTube Music"),
     ("datist", "󰸗", "datist", "Kalender"),
     ("wallist", "󰸉", "wallist", "Hintergründe für Super+W"),
+    ("mailist", "󰇮", "mailist", "Gmail, leicht löschen"),
 )
 
 HERE = os.path.dirname(os.path.realpath(__file__))

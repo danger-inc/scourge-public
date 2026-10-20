@@ -129,6 +129,9 @@ SUITE = [
      "~/.local/share/rice-apps/calendar/VERSION", "~/.config/kalender"),
     ("wallist", "󰸉", "wallist", "Hintergründe für Super+W", ["wallist"], "Einstellungen im Fenster selbst",
      "~/.local/share/wallist/VERSION", "~/.config/wallist"),
+    ("mailist", "󰇮", "mailist", "Gmail im Explorer-Stil (Super+G)", ["mailist"],
+     "Einstellungen im Menü oben rechts, Konto links unter „konto“", "~/.local/share/mailist/VERSION",
+     "~/.config/mailist"),
 ]
 
 
@@ -147,6 +150,9 @@ ADMIN = {
     "datist": dict(proc=r"/rice-apps/calendar/ui\.py", restart=None, repo="~/Projects/datist"),
     "wallist": dict(proc=r"/wallist/wallist\.py", restart=None,
                     cache=("~/.cache/wallist/thumbs", ()), repo="~/Projects/wallist"),
+    # mail.db ist der Zwischenspeicher (Gmail hat alles) – aber nie leeren, solange noch etwas zu senden ist
+    "mailist": dict(proc=r"/mailist/mailist\.py", log=f"{RUN}/mailist.log", restart=["mailist", "--daemon"],
+                    cache=("~/.cache/mailist", ("mail.db", "mail.db-wal", "mail.db-shm")), repo="~/Projects/mailist"),
 }
 
 

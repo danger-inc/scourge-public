@@ -137,6 +137,26 @@ CLASSES = {}
 
 
 
+# Eingabefeld je Werkzeug + Start-Methode – für prefill() (andere Apps übergeben einen Wert, z. B. mailist)
+PREFILL = {"email": ("mail", "check"), "domain": ("dom", "check"), "username": ("name", "search"),
+           "link": ("url", "check"), "archive": ("q", "check"), "phone": ("num", "check"),
+           "mailheader": ("text", "analyze")}
+
+
+def prefill(page, key, value):
+    field, method = PREFILL.get(key, (None, None))
+    w = getattr(page, field, None) if field else None
+    if w is None:
+        return
+    if isinstance(w, Gtk.TextView):
+        w.get_buffer().set_text(value)
+    else:
+        w.set_text(value)
+    if key == "link" and hasattr(page, "follow"):
+        page.follow.set_active(False)          # aus einer Mail: erst nur lokal prüfen, nicht aufrufen
+    GLib.idle_add(lambda: (getattr(page, method)(), False)[1])
+
+
 def make(key, tab):
     page = CLASSES[key](tab)
     return page
