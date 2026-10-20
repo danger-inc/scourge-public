@@ -1,5 +1,17 @@
 # scourge – Änderungen
 
+## 2.5.1 (2026-10-20)
+- **Neues Zurück-Wischen im -ist-Design**: Beim Wischen mit zwei Fingern schiebt sich die vorige Seite als Rahmen vom Rand herein – mit einem echten Bild davon und ihrem Namen im Chip. Ist der Rahmen durchgezogen, führt Loslassen zurück, und die Seite klappt über das ganze Fenster auf.
+- Nach dem Zurück-Wischen springt die Seite nicht mehr ein Stück nach oben (der erste Millimeter der Geste scrollte noch mit und lief nach).
+
+## 2.5.0 (2026-10-20)
+- **Zwei Finger nach rechts wischen** (oder Maustaste „zurück“) geht eine Ebene zurück, wie in filist.
+- **Wallpaper-Wechsel (Super+W)**: scourge übernimmt die neuen Farben jetzt zuverlässig überall, auch in
+  selbst gezeichneten Teilen wie Kartentiteln, und auch wenn scourge gerade im Hintergrund wartet.
+- **Terminal-Visuals**: `istfx`-Effekte wechseln beim Wallpaper-Wechsel live die Farben, statt bei den alten
+  zu bleiben. „starten“ funktioniert jetzt immer – vorher schloss sich das Terminal sofort, wenn scourge beim
+  Anmelden im Hintergrund gestartet war. Schlägt ein Befehl fehl, bleibt das Fenster mit der Meldung offen.
+
 ## 2.4.0 (2026-10-20)
 - **Neue Rubrik „software“** auf der Startseite:
   - **Standard-Apps**: Browser, Dateimanager, PDF, Bilder, Videos, Musik, Text, Word, LaTeX, Archive, E-Mail-Links –

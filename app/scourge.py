@@ -672,7 +672,14 @@ class Tab(Gtk.Box):
 
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, vexpand=True,
                                hhomogeneous=False)  # breiteste Seite soll nicht das ganze Fenster aufblähen
-        self.append(self.stack)
+        try:                # Zwei Finger nach rechts / Maustaste „zurück“ = eine Ebene zurück (wie filist)
+            import swipe
+            self.swipe = swipe.SwipeBack(self.stack, self.can_back, self.go_back, self._swipe_blocked,
+                                         where=self.swipe_where, target=self.swipe_target)
+            self.append(self.swipe.widget)
+        except Exception:
+            self.swipe = None
+            self.append(self.stack)
         from home import HomePage
         self.home = HomePage(self)
         self.stack.add_named(self.home, "home")
@@ -831,6 +838,67 @@ class Tab(Gtk.Box):
                     pg.pause()
         except Exception:
             pass
+
+    def can_back(self):
+        if getattr(self, "focused", False):           # PDF-Arbeitsfläche: Wischen gehört dem Dokument
+            return False
+        return self.page() != "home"
+
+    def go_back(self):
+        page = self.page()
+        if page == "editor":
+            self.leave_editor()
+        elif page == "main" and self.parents:
+            self.go_parent()
+        else:
+            self.go_home()
+
+    def _swipe_title(self, page, src):
+        if page == "home":
+            return "start"
+        if page == "main":
+            return os.path.basename(src) if src else "zwischenablage"
+        if page == "editor":
+            return "editor"
+        if page == "osint":
+            return "analyse"
+        t = getattr(self, "PAGE_TITLES", {}).get(page) or PAGE_TITLES.get(page)
+        return (t or page.replace("tool-", "")).lower()
+
+    def swipe_where(self):
+        """Für die 2fz-Vorschau: (schlüssel, titel) der aktuellen Seite."""
+        page = self.page()
+        src = self.source if page in ("main", "editor", "osint") else None
+        return (page, src), self._swipe_title(page, src)
+
+    def swipe_target(self):
+        """Wohin go_back() führt – muss zur Logik dort passen."""
+        page = self.page()
+        if page == "editor":
+            key = ("main", self.source)
+        elif page == "osint":
+            key = ("main", self.parents[-1]) if self.parents else ("main", self.source)
+        elif page == "main" and self.parents:
+            key = ("main", self.parents[-1])
+        else:
+            key = ("home", None)
+        return key, self._swipe_title(*key)
+
+    @staticmethod
+    def _swipe_blocked(w):
+        """Widgets, die waagerechtes Wischen selbst brauchen (Zeitleiste, Zeichenflächen mit Scroll-Steuerung)."""
+        if isinstance(w, (Gtk.ScrolledWindow, Gtk.Scrollbar)):
+            return False
+        try:
+            ctrls = w.observe_controllers()
+            for i in range(ctrls.get_n_items()):
+                c = ctrls.get_item(i)
+                if isinstance(c, Gtk.EventControllerScroll) and (
+                        c.get_flags() & Gtk.EventControllerScrollFlags.HORIZONTAL):
+                    return True
+        except Exception:
+            pass
+        return False
 
     def go_home(self):
         self.stop_media()
@@ -1576,6 +1644,7 @@ class Scourge(Gtk.Application):
         self.daemon = False         # mit --daemon gestartet: Fenster vorbauen, erst beim nächsten Aufruf zeigen
         self._held = False
         self._quitting = False
+        self._css_src = None
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -1713,6 +1782,43 @@ class Scourge(Gtk.Application):
                 if f.get_path().lower().endswith(".pdf"):
                     GLib.idle_add(tab.open_fullscreen)
 
+    def _on_colors_changed(self, _mon, f, other, _ev):
+        names = {x.get_basename() for x in (f, other) if x is not None}
+        if os.path.basename(MATUGEN_CSS) not in names:
+            return
+        if self._css_timer:
+            GLib.source_remove(self._css_timer)
+        self._css_timer = GLib.timeout_add(250, self._colors_settled)
+
+    def _colors_settled(self):
+        self._css_timer = 0
+        try:
+            src = open(MATUGEN_CSS).read()
+        except OSError:
+            return False
+        if "@define-color" not in src:          # matugen schreibt noch → gleich nochmal
+            self._css_timer = GLib.timeout_add(250, self._colors_settled)
+            return False
+        if src != self._css_src:
+            self.load_css()
+        return False
+
+    def _redraw_all(self):
+        """Selbst gezeichnete Teile (Kartentitel, Zeitleiste, Farbfelder …) lesen die Farbe beim Zeichnen –
+        ihr eigener Stil ändert sich beim Farbwechsel aber nicht, also zeichnet GTK sie sonst nicht neu."""
+        def walk(w):
+            w.queue_draw()
+            c = w.get_first_child()
+            while c is not None:
+                walk(c)
+                c = c.get_next_sibling()
+        for win in self.get_windows():
+            walk(win)
+        if getattr(self, "notebook", None) is not None:    # auch Tabs, die gerade nicht sichtbar sind
+            for i in range(self.notebook.get_n_pages()):
+                walk(self.notebook.get_nth_page(i))
+        return False
+
     def load_css(self, *_):
         from home import HOME_CSS
         from cutter import CUTTER_CSS
@@ -1720,25 +1826,36 @@ class Scourge(Gtk.Application):
         from studio import STUDIO_CSS
         css = FALLBACK_COLORS
         try:
-            css += open(MATUGEN_CSS).read()
+            self._css_src = open(MATUGEN_CSS).read()
+            css += self._css_src
         except OSError:
             pass
         import chrome
         from drawer import DRAWER_CSS
         PUBLISH_CSS = ""
-        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS)
+        try:
+            from swipe import CSS as SWIPE_CSS
+        except ImportError:
+            SWIPE_CSS = ""
+        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
         for tab in self.tabs():
             if tab.image is not None:
                 tab.swatch.queue_draw()
             tab.editor.reload_colors()
+        GLib.idle_add(self._redraw_all)
 
     def build(self):
         install_logo()
         self.css = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.css, Gtk.STYLE_PROVIDER_PRIORITY_USER)
         self.load_css()
-        self.monitor = Gio.File.new_for_path(MATUGEN_CSS).monitor_file(Gio.FileMonitorFlags.NONE, None)
-        self.monitor.connect("changed", lambda *_: GLib.timeout_add(150, lambda: self.load_css() and False))
+        # Super+W: matugen schreibt colors.css (teils in mehreren Schritten) → entprellt neu laden.
+        # Ordner statt Datei beobachten: übersteht auch Ersetzen per Umbenennen.
+        self._css_timer = 0
+        self.monitor = Gio.File.new_for_path(os.path.dirname(MATUGEN_CSS)).monitor_directory(
+            Gio.FileMonitorFlags.WATCH_MOVES, None)
+        self.monitor.set_rate_limit(100)
+        self.monitor.connect("changed", self._on_colors_changed)
 
         self.win = Gtk.ApplicationWindow(application=self, title="Scourge")
         self.win.set_default_size(*getattr(glass, "fit_size", lambda w, h: (w, h))(1200, 780))   # kleine Bildschirme

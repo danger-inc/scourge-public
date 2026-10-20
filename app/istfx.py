@@ -14,11 +14,14 @@ def effect(name, desc):
 
 
 # ---------------- Farben ----------------
+COLORS_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
+
+
 def palette():
     cols = {"background": "#1a1b26", "foreground": "#c0caf5", "primary": "#7aa2f7", "secondary": "#bb9af7",
             "tertiary": "#9ece6a", "outline": "#565f89"}
     try:
-        txt = open(os.path.expanduser("~/.cache/matugen/colors.css")).read()
+        txt = open(COLORS_CSS).read()
         for k, v in re.findall(r"@define-color\s+(\w+)\s+(#[0-9a-fA-F]{6})", txt):
             cols.setdefault(k, v)
             cols[k] = v
@@ -28,6 +31,36 @@ def palette():
 
 
 P = palette()
+GEN = [0]             # zählt Farbwechsel; Effekte mit vorberechneten Verläufen fragen das ab
+
+
+def colors_mtime():
+    try:
+        return os.stat(COLORS_CSS).st_mtime_ns
+    except OSError:
+        return 0
+
+
+def reload_palette():
+    """Super+W während ein Effekt läuft: neue Farben übernehmen (P bleibt dasselbe Objekt)."""
+    new = palette()
+    if len(new) < 6 or new == P:
+        return False
+    P.clear()
+    P.update(new)
+    GEN[0] += 1
+    return True
+
+
+def cached(fn):
+    """Wert aus den Farben berechnen und bis zum nächsten Farbwechsel merken."""
+    box = [None, None]
+
+    def get():
+        if box[0] != GEN[0]:
+            box[0], box[1] = GEN[0], fn()
+        return box[1]
+    return get
 
 
 def mix(a, b, t):
@@ -101,7 +134,16 @@ def run(frame, fps=30):
     """frame(t, w, h, first) → Text des Bildes. Läuft, bis q/Esc gedrückt wird."""
     with Term() as term:
         t0 = time.time()
+        mt, next_check = colors_mtime(), 0.0
         while True:
+            now = time.time()
+            if now >= next_check:              # Farbdatei 2× pro Sekunde prüfen (billig: nur stat)
+                next_check = now + 0.5
+                m = colors_mtime()
+                if m != mt:
+                    mt = m
+                    if reload_palette():
+                        sys.stdout.write("\x1b[0m" + bg(P["background"]) + "\x1b[2J")
             first = term.resized
             if first:
                 term.resized = False
@@ -157,9 +199,11 @@ def matrix():
 @effect("fire", "Lagerfeuer (Doom-Feuer) von unten")
 def fire():
     st = {}
-    stops = [P["background"], mix(P["primary"], P["background"], 0.6), P["primary"], P["tertiary"], P["foreground"]]
+    get_stops = cached(lambda: [P["background"], mix(P["primary"], P["background"], 0.6), P["primary"],
+                                P["tertiary"], P["foreground"]])
 
     def frame(t, w, h, first):
+        stops = get_stops()
         H = h * 2
         if first or st.get("w") != w:
             st.update(w=w, buf=[[0.0] * w for _ in range(H)])
@@ -258,8 +302,9 @@ def donut():
 
 @effect("plasma", "fließende Farbwellen (Halbblock-Pixel)")
 def plasma():
-    stops = [P["background"], mix(P["primary"], P["background"], 0.5), P["primary"], P["secondary"],
-             P["tertiary"], mix(P["tertiary"], P["background"], 0.6), P["background"]]
+    get_stops = cached(lambda: [P["background"], mix(P["primary"], P["background"], 0.5), P["primary"],
+                                P["secondary"], P["tertiary"], mix(P["tertiary"], P["background"], 0.6),
+                                P["background"]])
 
     def val(x, y, t):
         v = math.sin(x * 0.09 + t) + math.sin((y * 0.12 + t) * 0.8) + math.sin((x * 0.05 + y * 0.07 + t) * 1.3)
@@ -267,6 +312,7 @@ def plasma():
         return (v + 4) / 8
 
     def frame(t, w, h, first):
+        stops = get_stops()
         out = []
         for y in range(h):
             prev = [None, None]

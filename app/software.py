@@ -468,13 +468,28 @@ class TerminalVisuals(ToolPage):
         if not term:
             return
         name = os.path.basename(term.split()[0])
-        inner = cmd + "; exec $SHELL" if cmd.startswith(("fastfetch", "istfx fetch")) else cmd
+        # Der Hintergrunddienst (Autostart) hat ~/.local/bin oft nicht im PATH → istfx direkt über den eigenen
+        # Pfad starten und PATH ergänzen; schlägt der Befehl fehl, bleibt das Fenster mit der Meldung offen.
+        env = dict(os.environ)
+        local_bin = os.path.expanduser("~/.local/bin")
+        if local_bin not in env.get("PATH", "").split(":"):
+            env["PATH"] = local_bin + ":" + env.get("PATH", "/usr/bin")
+        env.pop("TERM", None)
+        run = cmd
+        if cmd.split()[0] == "istfx":
+            here = os.path.join(os.path.dirname(os.path.realpath(__file__)), "istfx.py")
+            run = shlex.join([shutil.which("python3") or "python3", here]) + cmd[len("istfx"):]
+        if cmd.startswith(("fastfetch", "istfx fetch")):
+            inner = run + "; exec ${SHELL:-sh}"
+        else:
+            inner = (f"{run} || {{ echo; echo '» {cmd} ist fehlgeschlagen – Enter schließt'; read _; }}")
         if name == "wezterm":
             argv = shlex.split(term) + ["start", "--", "sh", "-c", inner]
         else:
             argv = shlex.split(term) + ["-e", "sh", "-c", inner]
         try:
-            subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=env, cwd=os.path.expanduser("~"))
         except OSError as e:
             self.tab.notify(f"Terminal startet nicht: {e}")
 
