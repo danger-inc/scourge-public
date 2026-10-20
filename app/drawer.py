@@ -59,6 +59,22 @@ def app_path(cmd):
 PREFS = os.path.expanduser("~/.config/scourge/drawer.json")
 
 
+def custom_icon(cmd):
+    """Eigenes Icon aus ~/.config/ist-icons (software → suite-apps) als kleines Bild, sonst None."""
+    try:
+        import icons
+        f = icons.custom_file(cmd)
+        if not f:
+            return None
+        pic = Gtk.Picture.new_for_paintable(Gdk.Texture.new_from_filename(f))
+        pic.set_size_request(26, 26)
+        pic.set_can_shrink(True)
+        pic.set_content_fit(Gtk.ContentFit.CONTAIN)
+        return pic
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class AppDrawer(Gtk.Box):
     """Zwei Zustände: schwebend (Maus am linken Rand, liegt über dem Inhalt, schließt beim Verlassen) und
     angeheftet (Klick auf „scourge“: steht links neben dem Inhalt und schiebt ihn zur Seite – nichts wird verdeckt)."""
@@ -82,6 +98,8 @@ class AppDrawer(Gtk.Box):
         self.edge.add_css_class("drawer-edge")
         m = Gtk.EventControllerMotion()
         m.connect("enter", lambda *_: self.open())
+        # Maus fährt über die Kante gleich aus dem Fenster hinaus (ohne die Leiste zu berühren) → wieder schließen
+        m.connect("leave", lambda *_: self.is_open() and self._leave())
         self.edge.add_controller(m)
         self.ov.add_overlay(self.edge)
 
@@ -123,7 +141,7 @@ class AppDrawer(Gtk.Box):
             b = Gtk.Button(focus_on_click=False)
             b.add_css_class("applink")
             row = Gtk.Box(spacing=10)
-            ic = Gtk.Label(label=icon, xalign=0.5)
+            ic = custom_icon(cmd) or Gtk.Label(label=icon, xalign=0.5)
             ic.add_css_class("app-icon")
             txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             n = Gtk.Label(label=name, xalign=0)

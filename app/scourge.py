@@ -62,6 +62,8 @@ def install_logo():
     """Das Logo aus logo/ ins System übernehmen (Starter, Taskleiste, Benachrichtigungen).
     scourge.svg (oder .png) = farbiges App-Icon, scourge-symbolic.svg = einfarbig für die Oberfläche."""
     import shutil
+    if any(os.path.isfile(os.path.expanduser(f"~/.config/ist-icons/scourge{e}")) for e in (".svg", ".png")):
+        return              # eigenes Icon (scourge → software → suite-apps) nicht überschreiben
     changed = False
     for name, sub in (("scourge.svg", "scalable"), ("scourge-symbolic.svg", "scalable"), ("scourge.png", "256x256")):
         src = os.path.join(LOGO_DIR, name)
@@ -1101,6 +1103,20 @@ class Tab(Gtk.Box):
         self.app_main.apply_chrome()
         if on:
             self.pdf_view.grab_focus()
+        elif getattr(self, "_fs", False):         # per Doppelklick im Vollbild geöffnet → Vollbild mit beenden
+            self._fs = False
+            self.app_main.win.unfullscreen()
+
+    def open_fullscreen(self, tries=20):
+        """PDF von außen geöffnet (Doppelklick im Dateimanager): gleich als Arbeitsfläche im Vollbild."""
+        if self.can_focus_pdf():
+            self._fs = True
+            self.app_main.win.fullscreen()
+            self.set_focus_mode(True)
+            return False
+        if tries > 0:                              # Netzlaufwerk: PDF kommt erst nach dem Laden
+            GLib.timeout_add(250, lambda: self.open_fullscreen(tries - 1))
+        return False
 
     def reset_preview(self):
         if getattr(self, "focused", False):
@@ -1576,6 +1592,9 @@ class Scourge(Gtk.Application):
     def do_activate(self):
         if not self.win:
             self.build()
+        # eigene App-Icons (software → suite-apps) erneut anwenden, falls ein Update sie überschrieben hat
+        import threading, icons
+        threading.Thread(target=lambda: icons.apply_all(), daemon=True).start()
         if self.daemon:
             self.daemon = False
             self.keep_running()
@@ -1589,10 +1608,19 @@ class Scourge(Gtk.Application):
                 import changelog
                 import drawer
                 if changelog.check_new("scourge", drawer.version()):
+                    self.ver_btn.remove_css_class("off")
+                    self.ver_btn.add_css_class("news")
+                    self.ver_btn.set_label(f"󰋚 v{drawer.version()}")
                     GLib.timeout_add(700, lambda: (self.notify(f"Neu in scourge v{drawer.version()} – changelog "
-                                                               "unten in der Apps-Leiste (Klick auf „scourge“)"), False)[-1])
+                                                               "oben rechts"), False)[-1])
             except Exception as e:
                 print("changelog:", e, file=sys.stderr)
+
+    def show_changelog(self):
+        self.drawer.open_changelog()
+        self.ver_btn.remove_css_class("news")
+        self.ver_btn.add_css_class("off")
+        self.ver_btn.set_label(f"v{__import__('drawer').version()}")
 
     def _prewarm(self):
         """Im Hintergrund schon mal laden, was beim ersten Öffnen einer Datei sonst Zeit kostet."""
@@ -1645,6 +1673,11 @@ class Scourge(Gtk.Application):
 
     def confirm_unsaved(self, tabs, proceed):
         """Bei ungespeicherten PDF-Anmerkungen nachfragen: Abbrechen / Verwerfen / Speichern."""
+        for t in tabs:                     # mit Datei: einfach sofort speichern (wie das automatische Speichern)
+            v = t.pdf_view
+            if v.dirty and v.path and v.editable:
+                v._backup_original(v.path)
+                v.save(quiet=True)
         dirty = [t for t in tabs if t.pdf_view.dirty]
         if not dirty:
             return proceed()
@@ -1677,6 +1710,8 @@ class Scourge(Gtk.Application):
                 if tab.page() != "home":
                     tab = self.new_tab()
                 tab.load_path(f.get_path())
+                if f.get_path().lower().endswith(".pdf"):
+                    GLib.idle_add(tab.open_fullscreen)
 
     def load_css(self, *_):
         from home import HOME_CSS
@@ -1750,6 +1785,13 @@ class Scourge(Gtk.Application):
         # oben rechts: neuer Tab, Formate/Hilfe, Glas, schließen
         right = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER, margin_start=10)
         right.append(ch.button("󰐕 tab", "Neuer Tab (Strg+T)", action="win.new_tab"))
+        # Version wie bei notist/datist: Klick zeigt den Changelog, nach einem Update hervorgehoben
+        self.ver_btn = Gtk.Button(label=f"v{drawer.version()}", tooltip_text="changelog – was ist neu?",
+                                  valign=Gtk.Align.CENTER, focus_on_click=False)
+        self.ver_btn.add_css_class("tflat")
+        self.ver_btn.add_css_class("off")
+        self.ver_btn.connect("clicked", lambda *_: self.show_changelog())
+        right.append(self.ver_btn)
         help_btn = Gtk.MenuButton(child=Gtk.Label(label="󰋗"), tooltip_text="Welche Dateien kann Scourge prüfen?",
                                   valign=Gtk.Align.CENTER)
         help_btn.add_css_class("tbtn")

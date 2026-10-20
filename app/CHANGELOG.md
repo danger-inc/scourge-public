@@ -1,5 +1,27 @@
 # scourge – Änderungen
 
+## 2.4.0 (2026-10-20)
+- **Neue Rubrik „software“** auf der Startseite:
+  - **Standard-Apps**: Browser, Dateimanager, PDF, Bilder, Videos, Musik, Text, Word, LaTeX, Archive, E-Mail-Links –
+    je eine Auswahlliste, gilt sofort systemweit.
+  - **Suite-Apps**: notist, filist, musicalist, datist, wallist und scourge mit Version, Tastenkürzel, Ordner, wofür
+    sie Standard sind, „öffnen“ und „einstellungen“ (springt direkt in die Einstellungen der App) und Schalter fürs
+    Vorladen beim Anmelden.
+  - **Eigene Icons**: <app>.svg oder .png in ~/.config/ist-icons legen oder „icon wählen“ – scourge schreibt es als
+    App-Symbol ins System (Starter, Taskleiste, Apps-Leiste) und setzt es nach Updates erneut. „icon zurücksetzen“
+    holt das Original zurück, dein Entwurf bleibt in .alt/.
+  - **Terminal-Visuals**: neuer Befehl `istfx` mit matrix, fire, stars, donut, plasma, life, clock, rain und fetch –
+    immer in den Farben des aktuellen Hintergrunds. Dazu cbonsai, pipes.sh, cava, btop & Co. mit Start- und
+    Kopierknopf.
+- **PDF per Doppelklick** (z. B. aus filist) öffnet direkt im Vollbild als Arbeitsfläche; Esc/F11 beendet beides.
+- Die Apps-Leiste schließt jetzt auch, wenn die Maus über den linken Rand aus dem Fenster fährt.
+- **Version oben rechts** wie bei den anderen Apps – Klick zeigt den Changelog, nach einem Update hervorgehoben.
+
+## 2.3.0 (2026-10-20)
+- **PDF-Editor speichert automatisch** direkt in die geöffnete Datei – kein Strg+S und kein „Speichern unter“ mehr
+  nötig, es entstehen keine Kopien. Vor dem ersten Überschreiben wird das Original einmal nach
+  ~/.cache/scourge/originale gesichert (30 Tage). Beim Schließen eines Tabs wird ohne Rückfrage gespeichert.
+
 ## 2.2.0 (2026-10-19)
 - **Changelog**: Apps-Leiste → „changelog“ zeigt, was sich in jeder Version geändert hat. Nach einem Update
   meldet die Statuszeile einmal, dass es Neues gibt.

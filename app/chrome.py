@@ -44,6 +44,8 @@ button.tclose { padding: 1px 6px; border-radius: 4px; color: @foreground; border
 button.tclose:hover { background-color: @tertiary; color: @background; }
 button.tflat { padding: 0 4px; border-radius: 4px; color: @primary; }
 button.tflat:hover, button.tflat:focus-visible { background-color: alpha(@primary, 0.18); }
+button.tflat.off { color: alpha(@foreground, 0.55); }
+button.tflat.news { color: @primary; border: 1px solid alpha(@primary, 0.55); }
 .tstatus { padding: 4px 14px 8px 14px; }
 .tstatus label { font-size: 12px; font-weight: bold; }
 .tstatus .dim, .dim { color: @secondary; }

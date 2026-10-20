@@ -542,7 +542,9 @@ class PdfView(Gtk.Box):
         self.redo_btn.set_sensitive(bool(self.redo_stack))
         self.save_btn.set_sensitive(self.dirty and bool(self.path))
         self.save_as_btn.set_sensitive(self.doc is not None)
-        self.dirty_lbl.set_label("● ungespeichert" if self.dirty else "")
+        self.dirty_lbl.set_label(("● speichert gleich …" if self.path else "● ungespeichert") if self.dirty else "")
+        if self.dirty:
+            self._queue_autosave()
         self.save_btn.set_label("󰆓 speichern" if self.dirty else "󰆓")
 
     # ---------- Popover: Auswahl-Aktionen, Text-/Notizeingabe ----------
@@ -671,6 +673,8 @@ class PdfView(Gtk.Box):
 
     # ---------- Laden & Zoom ----------
     def load(self, doc, path=None):
+        if self.dirty and self.path and self.doc and not self.edit:      # vorige Datei noch schnell sichern
+            self._autosave()
         self._stop_edit()
         self.doc = doc
         self.path = path
@@ -1049,7 +1053,58 @@ class PdfView(Gtk.Box):
             self._sync_tools()
 
     # ---------- Speichern ----------
-    def save(self, path=None):
+    # ---------- automatisch speichern ----------
+    # Anmerkungen landen ohne Strg+S direkt in der geöffneten Datei (keine Kopie). Vor dem ersten Überschreiben
+    # wird das Original einmal nach ~/.cache/scourge/originale gesichert.
+    AUTOSAVE_MS = 1200
+    AUTOSAVE_REMOTE_MS = 4000
+
+    def _queue_autosave(self):
+        if not (self.editable and self.dirty and self.path and self.doc):
+            return
+        if getattr(self, "_auto_id", None):
+            GLib.source_remove(self._auto_id)
+        import formats
+        ms = self.AUTOSAVE_REMOTE_MS if formats.is_remote(self.path) else self.AUTOSAVE_MS
+        self._auto_id = GLib.timeout_add(ms, self._autosave)
+
+    def _autosave(self):
+        self._auto_id = None
+        if not (self.dirty and self.path and self.doc):
+            return False
+        if self.edit:                     # tippt gerade direkt auf der Seite → später
+            self._queue_autosave()
+            return False
+        self._backup_original(self.path)
+        self.save(quiet=True)
+        return False
+
+    def _backup_original(self, path):
+        import hashlib, shutil
+        done = self.__dict__.setdefault("_backed_up", set())
+        if path in done:
+            return
+        done.add(path)
+        d = os.path.expanduser("~/.cache/scourge/originale")
+        try:
+            os.makedirs(d, exist_ok=True)
+            tag = hashlib.sha1(path.encode()).hexdigest()[:8]
+            dest = os.path.join(d, f"{tag}-{os.path.basename(path)}")
+            if not os.path.exists(dest):
+                shutil.copy2(path, dest)
+            # alte Sicherungen nach 30 Tagen wegräumen
+            import time
+            for f in os.listdir(d):
+                fp = os.path.join(d, f)
+                if time.time() - os.path.getmtime(fp) > 30 * 86400:
+                    os.remove(fp)
+        except OSError:
+            pass
+
+    def save(self, path=None, quiet=False):
+        if getattr(self, "_auto_id", None):
+            GLib.source_remove(self._auto_id)
+            self._auto_id = None
         self.commit_edit()
         target = path or self.path
         if not self.doc or not target:
@@ -1081,6 +1136,9 @@ class PdfView(Gtk.Box):
         self.path = target
         self.dirty = False
         self._sync_tools()
+        if quiet:                         # automatisch: nur leise im Status, keine Neu-Analyse bei jedem Strich
+            self.dirty_lbl.set_label("󰄬 automatisch gespeichert")
+            return True
         self.notify(f"Gespeichert: {os.path.basename(target)}")
         if self.on_saved:
             self.on_saved(target)

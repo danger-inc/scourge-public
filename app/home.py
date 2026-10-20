@@ -68,6 +68,14 @@ SYSTEM = [
 ]
 
 
+# (icon, name, beschreibung, seite)
+SOFTWARE = [
+    ("󰀻", "Standard-Apps", "Welches Programm öffnet PDFs, Bilder, Links, Ordner …", "defaults"),
+    ("󰣆", "Suite-Apps", "notist, filist, datist & Co. öffnen, Einstellungen, Kürzel, eigene Icons", "suite"),
+    ("󰆍", "Terminal-Visuals", "Matrix, Feuer, Donut, Bonsai … – Befehle zum Starten und Kopieren", "visuals"),
+]
+
+
 def card(icon, name, desc, cb, primary=False):
     b = Gtk.Button()
     b.add_css_class("home-card")
@@ -149,6 +157,13 @@ class HomePage(Gtk.ScrolledWindow):
             pass
         box.append(fl)
 
+        box = heading("software", "Standard-Apps ändern, die eigenen Apps mit Einstellungen und eigenen Icons, "
+                                  "und Befehle für schöne Terminal-Visuals.")
+        fl = flow()
+        for icon, name, desc, key in SOFTWARE:
+            fl.append(card(icon, name, desc, lambda key=key: self.open_software(key)))
+        box.append(fl)
+
         target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         target.set_gtypes([Gdk.FileList.__gtype__, Gdk.Texture.__gtype__])
         target.connect("enter", lambda *_: (page.add_css_class("drag-over"), Gdk.DragAction.COPY)[1])
@@ -204,6 +219,11 @@ class HomePage(Gtk.ScrolledWindow):
     def open_studio(self):
         from studio import StudioPage
         self.tab.open_page("tool-studio", lambda: StudioPage(self.tab))
+
+    def open_software(self, key):
+        import software
+        cls = {"defaults": software.DefaultApps, "suite": software.SuiteApps, "visuals": software.TerminalVisuals}[key]
+        self.tab.open_page("tool-software-" + key, lambda: cls(self.tab))
 
     def open_settings(self, section="input"):
         from system import SystemSettings
