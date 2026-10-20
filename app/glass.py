@@ -1,11 +1,15 @@
 # Glas-Modus für Pixelblick, wallist und Notes: Fenster werden durchscheinend wie die Konsole
 # (kitty: background_opacity 0.6), Hyprland zeichnet den Blur dahinter. Die Einstellung gilt für alle
 # Apps gemeinsam und wird live übernommen, auch in Fenstern, die schon offen sind.
-import json, os, subprocess
+import json, os, subprocess, sys
 
 from gi.repository import Gio, GLib, Graphene, Gtk
 
 SETTINGS = os.path.expanduser("~/.config/rice-apps/settings.json")
+
+# Windows: kein Glas. Durchsichtige GTK-Fenster ließen die App dort einfrieren, und weil der Zustand in
+# settings.json liegt, half auch kein Neuinstallieren. Schalter ausgeblendet, gespeicherter Wert ignoriert.
+AVAILABLE = not (os.name == "nt" or sys.platform.startswith(("win", "cygwin", "msys")))
 
 # Nur Hintergründe werden durchsichtig; Schrift, Rahmen und Akzentfarben bleiben voll deckend.
 # :not(...) sorgt dafür, dass Hover-/Aktiv-Zustände ihre volle Akzentfüllung behalten.
@@ -105,7 +109,7 @@ def load():
 
 
 def is_on():
-    return bool(load().get("glass", False))
+    return AVAILABLE and bool(load().get("glass", False))
 
 
 def set_on(on):
@@ -149,7 +153,7 @@ class BlurMarker(Gtk.Widget):
 def underlay(win):
     """Legt die Unterlage (BlurMarker) hinter den Fensterinhalt, siehe GLASS_CSS. Wird der Inhalt später
     ausgetauscht (set_child), kommt er automatisch wieder auf eine Unterlage. Mehrfach aufrufbar."""
-    if not SUPPORTED or getattr(win, "_glass_ul", False):
+    if not AVAILABLE or not SUPPORTED or getattr(win, "_glass_ul", False):
         return
     win._glass_ul = True
     win._glass_ov = None
@@ -184,6 +188,10 @@ class GlassToggle(Gtk.ToggleButton):
         self.add_css_class("pb")
         self.add_css_class("glass-toggle")
         self.window = window
+        if not AVAILABLE:                      # Windows: unsichtbar und ohne Wirkung
+            self.set_visible(False)
+            window.remove_css_class("glass")
+            return
         underlay(window)
         self._sync = False
         self.apply(is_on())

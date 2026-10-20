@@ -1,5 +1,10 @@
 # scourge – Änderungen
 
+## 2.6.1 (2026-10-20)
+- **Windows: kein Glas-Effekt mehr.** Der Knopf „durchsichtig“ ließ scourge unter Windows einfrieren, und weil
+  die Einstellung gespeichert blieb, half auch Neuinstallieren nicht. Unter Windows ist der Knopf jetzt weg,
+  Fenster sind immer undurchsichtig, und eine alte Einstellung wird ignoriert.
+
 ## 2.6.0 (2026-10-20)
 - **Neu: Bilder komprimieren** (Startseite → misc): viele Bilder auf einmal kleiner machen – Bilder wählen,
   Ordner wählen oder hineinziehen. Wahlweise nach Qualität oder mit Zielgröße je Bild (z. B. „höchstens 500 KB“),
