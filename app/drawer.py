@@ -16,7 +16,7 @@ APPS = (
     ("filist", "󰉋", "filist", "Dateien & Ordner"),
     ("musicalist", "󰝚", "musicalist", "YouTube Music"),
     ("datist", "󰸗", "datist", "Kalender"),
-    ("wallpapaer", "󰸉", "wallpapaer", "Hintergründe für Super+W"),
+    ("wallist", "󰸉", "wallist", "Hintergründe für Super+W"),
 )
 
 HERE = os.path.dirname(os.path.realpath(__file__))

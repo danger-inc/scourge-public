@@ -1,4 +1,4 @@
-# Glas-Modus für Pixelblick, Wallpapaer und Notes: Fenster werden durchscheinend wie die Konsole
+# Glas-Modus für Pixelblick, wallist und Notes: Fenster werden durchscheinend wie die Konsole
 # (kitty: background_opacity 0.6), Hyprland zeichnet den Blur dahinter. Die Einstellung gilt für alle
 # Apps gemeinsam und wird live übernommen, auch in Fenstern, die schon offen sind.
 import json, os, subprocess

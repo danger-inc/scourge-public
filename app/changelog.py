@@ -1,4 +1,4 @@
-# Changelog-Fenster für alle -ist-Apps (scourge, notist, filist, musicalist, datist, wallpapaer).
+# Changelog-Fenster für alle -ist-Apps (scourge, notist, filist, musicalist, datist, wallist).
 # Liest die CHANGELOG.md der App (Format: "## 1.2.0 (2026-10-19)" und darunter "- Punkt", Folgezeilen
 # eingerückt) und zeigt sie im Suite-Look: je Version ein Kasten mit Titel im Rahmen, neue Versionen hervorgehoben.
 # Eigenständig (nur Gtk), damit jede App eine Kopie mitliefern kann.
