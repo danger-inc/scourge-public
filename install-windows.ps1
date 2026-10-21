@@ -29,7 +29,7 @@ if (Test-Path "$Src\app\scourge.py") {
               Pkgs = $Base }
     $Copy = {
         Copy-Item "$Src\app\calendar\*" $App.Dir -Recurse -Force
-        Copy-Item "$Src\app\tui.py", "$Src\app\glass.py", "$Src\app\changelog.py" "$Share\rice-apps" -Force
+        Copy-Item "$Src\app\tui.py", "$Src\app\glass.py", "$Src\app\changelog.py", "$Src\app\swipe.py" "$Share\rice-apps" -Force
         New-Item -ItemType Directory -Force "$Share\rice-apps\fonts" | Out-Null
         Copy-Item "$Src\app\fonts\*" "$Share\rice-apps\fonts" -Force
         Copy-Item "$Src\datist.ico" $App.Dir -Force
