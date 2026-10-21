@@ -21,6 +21,7 @@ SUITE = {
     "datist": ("datist", "datist.desktop"),
     "wallist": ("wallist", "wallist.desktop"),
     "mailist": ("mailist", "mailist.desktop"),
+    "sharist": ("sharist", "sharist.desktop"),
 }
 EXTS = (".svg", ".png")
 

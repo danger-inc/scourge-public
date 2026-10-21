@@ -1684,6 +1684,26 @@ class Scourge(Gtk.Application):
                                                                "oben rechts"), False)[-1])
             except Exception as e:
                 print("changelog:", e, file=sys.stderr)
+        self.check_update()
+
+    def check_update(self):
+        """Neuere Version auf GitHub? → Versionsknopf „󰚰 v2.7.0 → v2.8.0“ + einmal Hinweis (Cache 6 h)."""
+        try:
+            import changelog
+            import drawer
+            version = drawer.version()
+
+            def has_update(latest):
+                self.ver_btn.remove_css_class("off")
+                self.ver_btn.add_css_class("news")
+                self.ver_btn.set_label(f"󰚰 v{version} → v{latest}")
+                self.ver_btn.set_tooltip_text(changelog.update_text(latest) + " · klick: changelog")
+                if getattr(self, "_update_told", None) != latest:
+                    self._update_told = latest
+                    GLib.timeout_add(1000, lambda: (self.notify(changelog.update_text(latest)), False)[-1])
+            getattr(changelog, "check_update", lambda *a: None)("scourge", version, has_update)
+        except Exception as e:
+            print("update-check:", e, file=sys.stderr)
 
 
     def show_changelog(self):

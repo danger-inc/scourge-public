@@ -132,6 +132,8 @@ SUITE = [
     ("mailist", "󰇮", "mailist", "Gmail im Explorer-Stil (Super+G)", ["mailist"],
      "Einstellungen im Menü oben rechts, Konto links unter „konto“", "~/.local/share/mailist/VERSION",
      "~/.config/mailist"),
+    ("sharist", "󰒊", "sharist", "Quick Share mit Android-Handys (Super+D)", ["sharist"],
+     "Name, Ordner und Sichtbarkeit im Tab „empfangen“", "~/.local/share/sharist/VERSION", "~/.config/sharist"),
 ]
 
 
@@ -153,6 +155,8 @@ ADMIN = {
     # mail.db ist der Zwischenspeicher (Gmail hat alles) – aber nie leeren, solange noch etwas zu senden ist
     "mailist": dict(proc=r"/mailist/mailist\.py", log=f"{RUN}/mailist.log", restart=["mailist", "--daemon"],
                     cache=("~/.cache/mailist", ("mail.db", "mail.db-wal", "mail.db-shm")), repo="~/Projects/mailist"),
+    "sharist": dict(proc=r"/sharist/sharist\.py", log=f"{RUN}/sharist.log", restart=["sharist", "--daemon"],
+                    repo="~/Projects/sharist"),
 }
 
 

@@ -4,6 +4,8 @@
 # Eigenständig (nur Gtk), damit jede App eine Kopie mitliefern kann.
 #   changelog.open_window(parent, "datist", "/pfad/CHANGELOG.md", key="datist")
 #   changelog.check_new("datist", version) → True, wenn seit dem letzten Start eine neue Version da ist
+#   changelog.check_update("datist", version, callback) → callback("1.5.0") im GTK-Thread, wenn es auf GitHub
+#       eine neuere Version gibt (Hintergrund-Thread, höchstens alle 6 h, ohne Netz/Zugang still)
 import json
 import math
 import os
@@ -127,6 +129,115 @@ def mark_seen(key, version):
     if data.get(key) != version:
         data[key] = version
         _save_seen(data)
+
+
+# ---------- Gibt es eine neuere Version? ----------
+# App → (Pfad der VERSION im Repo, Repos in Prüf-Reihenfolge: privat, dann öffentliche Ausgabe)
+REPOS = {
+    "scourge": ("app/VERSION", ("invincible-nix/scourge", "invincible-nix/scourge-public")),
+    "notist": ("app/VERSION", ("invincible-nix/notist", "invincible-nix/notist-public")),
+    "filist": ("app/VERSION", ("invincible-nix/filist",)),
+    "musicalist": ("app/music/VERSION", ("invincible-nix/musicalist", "invincible-nix/musicalist-public")),
+    "datist": ("app/calendar/VERSION", ("invincible-nix/datist",)),
+    "wallist": ("app/wallist/VERSION", ("invincible-nix/wallist",)),
+    "mailist": ("app/mailist/VERSION", ("invincible-nix/mailist", "invincible-nix/mailist-public")),
+    "sharist": ("app/sharist/VERSION", ("invincible-nix/sharist",)),
+}
+UPDATE_FILE = os.path.expanduser("~/.cache/ist-updates.json")
+UPDATE_EVERY = 6 * 3600
+UPDATE_HINT = "./update.sh im repo-ordner"
+_updates = {}          # app → neuere Version (für das Changelog-Fenster)
+
+
+def _token():
+    tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if tok:
+        return tok
+    import shutil
+    import subprocess
+    gh = shutil.which("gh")
+    if not gh:
+        return None
+    try:
+        r = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _fetch(repo, path, token):
+    import urllib.request
+    if token:
+        req = urllib.request.Request(f"https://api.github.com/repos/{repo}/contents/{path}",
+                                     headers={"Authorization": f"Bearer {token}",
+                                              "Accept": "application/vnd.github.raw", "User-Agent": "ist-apps"})
+    else:
+        req = urllib.request.Request(f"https://raw.githubusercontent.com/{repo}/HEAD/{path}",
+                                     headers={"User-Agent": "ist-apps"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        v = r.read(64).decode().strip()
+    return v if re.match(r"^\d+(\.\d+)*$", v) else None
+
+
+def latest_version(key):
+    """Neueste Version auf GitHub (blockiert – nur im Thread aufrufen). None = unbekannt."""
+    path, repos = REPOS.get(key, (None, ()))
+    token = _token()
+    for repo in repos:
+        for tok in ((token, None) if token else (None,)):
+            try:
+                v = _fetch(repo, path, tok)
+                if v:
+                    return v
+            except Exception:
+                continue
+    return None
+
+
+def _load_updates():
+    try:
+        with open(UPDATE_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def check_update(key, version, callback):
+    """callback(neuere_version) im GTK-Thread, falls GitHub eine neuere Version als `version` hat."""
+    if not version or key not in REPOS:
+        return
+    import threading
+    import time
+    cache = _load_updates().get(key) or {}
+
+    def report(latest):
+        if latest and _vkey(latest) > _vkey(version):
+            _updates[key] = latest
+            GLib.idle_add(lambda: (callback(latest), False)[1])
+
+    if time.time() - cache.get("t", 0) < UPDATE_EVERY:
+        report(cache.get("latest"))
+        return
+
+    def work():
+        latest = latest_version(key)
+        if latest:
+            data = _load_updates()
+            data[key] = {"t": time.time(), "latest": latest}
+            try:
+                os.makedirs(os.path.dirname(UPDATE_FILE), exist_ok=True)
+                tmp = f"{UPDATE_FILE}.{os.getpid()}"
+                with open(tmp, "w") as f:
+                    json.dump(data, f, indent=1)
+                os.replace(tmp, UPDATE_FILE)
+            except OSError:
+                pass
+        report(latest)
+    threading.Thread(target=work, daemon=True).start()
+
+
+def update_text(latest):
+    return f"v{latest} ist da – aktualisieren: {UPDATE_HINT}"
 
 
 # ---------- Darstellung ----------
@@ -301,7 +412,9 @@ def open_window(parent, brand, path, key=None, version=None, colors_css=None):
     n_new = sum(1 for e in entries if since is not None and _vkey(e["version"]) > _vkey(since))
     for txt, cls in (("esc", "cl-accent"), ("zu", "cl-dim")) + (
             (("   ·   ", "cl-dim"), (f"{n_new} neue Version{'en' if n_new != 1 else ''} seit v{since}", "cl-accent"))
-            if n_new else ()):
+            if n_new else ()) + (
+            (("   ·   ", "cl-dim"), (f"v{_updates[key]} verfügbar – {UPDATE_HINT}", "cl-accent"))
+            if key in _updates else ()):
         lbl = Gtk.Label(label=txt)
         lbl.add_css_class(cls)
         status.append(lbl)
