@@ -129,6 +129,10 @@ def set_on(on):
 # Fenster, Glas an: GPU beim Scrollen 47 % → 28 % (Glas aus: 22 %); großes Fenster 30 → 60 Bilder/s.
 _TINY = 0.001
 SUPPORTED = hasattr(Gtk.Snapshot, "push_copy") and hasattr(Gtk.Snapshot, "append_paste")   # GTK >= 4.22
+# Der Software-Renderer (GSK_RENDERER=cairo, z. B. ricetui/musicd) kann die riesige Fläche nicht anlegen
+# („drawing failure … too big“) – dann bleibt das ganze Fenster leer. Dort gilt weiter backdrop-filter aus GLASS_CSS.
+if os.environ.get("GSK_RENDERER", "").strip().lower() == "cairo":
+    SUPPORTED = False
 
 
 class BlurMarker(Gtk.Widget):
