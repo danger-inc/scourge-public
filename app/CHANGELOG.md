@@ -1,5 +1,18 @@
 # scourge – Änderungen
 
+## 2.8.0 (2026-10-22)
+- **Neu: Hyprland** (Startseite → software): alle Tastenkürzel aus der hyprland.lua verständlich beschrieben,
+  nach Rubriken sortiert und durchsuchbar (z. B. „screenshot“ oder „Super+M“) – neue Kürzel erscheinen von
+  selbst. Dazu Touchpad-Gesten, was beim Anmelden startet, Status (Version, Bildschirme, Konfig-Fehler) mit
+  Knopf „neu laden“, nützliche hyprctl-Befehle zum Ausführen oder Kopieren und die wichtigen Dateien.
+- **Tabs in schmalen Fenstern**: Die Reiter teilen sich jetzt die ganze Kopfzeile, das ✕ steht immer am rechten
+  Rand des Reiters. Wird es eng, werden die Namen gekürzt; Pfeile gibt es erst bei sehr vielen Tabs. Vorher
+  verschwanden Reiter, und der letzte wurde mit dem ✕ in der Mitte in die Breite gezogen.
+- **Eigene Icons laden schneller**: scourge legt sie jetzt zusätzlich als kleine Bilder (16–512 px) ins
+  Icon-Theme und verkleinert eingebettete Riesenbilder in der SVG (8 MB → 0,3 MB). Der Starter (Super+R) und die
+  Taskleiste zeigen sie dadurch sofort.
+- **Apps-Leiste links**: Eigene Icons erscheinen in derselben Größe wie die anderen Symbole statt riesig.
+
 ## 2.7.0 (2026-10-20)
 - **Suite-Apps verwalten** (Startseite → software → Suite-Apps): Jede App zeigt jetzt, ob sie läuft, seit wann,
   wie viel Arbeitsspeicher sie braucht und ob ein Fenster offen ist. Dazu Knöpfe zum **Neustarten** und

@@ -74,6 +74,7 @@ SOFTWARE = [
     ("󰀻", "Standard-Apps", "Welches Programm öffnet PDFs, Bilder, Links, Ordner …", "defaults"),
     ("󰣆", "Suite-Apps", "notist, filist, datist & Co. öffnen, Einstellungen, Kürzel, eigene Icons", "suite"),
     ("󰆍", "Terminal-Visuals", "Matrix, Feuer, Donut, Bonsai … – Befehle zum Starten und Kopieren", "visuals"),
+    ("󰌌", "Hyprland", "Alle Tastenkürzel durchsuchbar, Gesten, Autostart, Status und nützliche Befehle", "hyprland"),
 ]
 
 
@@ -159,7 +160,7 @@ class HomePage(Gtk.ScrolledWindow):
         box.append(fl)
 
         box = heading("software", "Standard-Apps ändern, die eigenen Apps mit Einstellungen und eigenen Icons, "
-                                  "und Befehle für schöne Terminal-Visuals.")
+                                  "Befehle für schöne Terminal-Visuals und alle Hyprland-Tastenkürzel.")
         fl = flow()
         for icon, name, desc, key in SOFTWARE:
             fl.append(card(icon, name, desc, lambda key=key: self.open_software(key)))
@@ -227,6 +228,9 @@ class HomePage(Gtk.ScrolledWindow):
 
     def open_software(self, key):
         import software
+        if key == "hyprland":
+            import hyprinfo
+            return self.tab.open_page("tool-software-hyprland", lambda: hyprinfo.HyprlandInfo(self.tab))
         cls = {"defaults": software.DefaultApps, "suite": software.SuiteApps, "visuals": software.TerminalVisuals}[key]
         self.tab.open_page("tool-software-" + key, lambda: cls(self.tab))
 

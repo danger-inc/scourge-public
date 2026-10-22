@@ -1992,7 +1992,9 @@ class Scourge(Gtk.Application):
         box = Gtk.Box(spacing=3)
         key = Gtk.Label(label="")
         key.add_css_class("key")
-        lbl = Gtk.Label(label="start", ellipsize=3, max_width_chars=24, width_chars=5)
+        # Reiter teilen sich die ganze Kopfzeile (tab-expand); wird es eng, kürzt der Name auf „Fa…“ und erst
+        # danach erscheinen Pfeile. Name füllt den Reiter → das ✕ steht immer am rechten Rand des Reiters.
+        lbl = Gtk.Label(label="start", ellipsize=3, max_width_chars=24, width_chars=3, hexpand=True, xalign=0)
         close = Gtk.Button(label="✕", tooltip_text="Tab schließen (Strg+W)", focus_on_click=False)
         close.add_css_class("tab-close")
         box.append(key)
@@ -2006,6 +2008,7 @@ class Scourge(Gtk.Application):
         tab._tab_label = lbl
         i = self.notebook.append_page(tab, box)
         self.notebook.set_tab_reorderable(tab, True)
+        self.notebook.get_page(tab).set_property("tab-expand", True)
         self.notebook.set_current_page(i)
         return tab
 
@@ -2037,7 +2040,6 @@ class Scourge(Gtk.Application):
         if getattr(tab, "_tab_label", None):
             text = tab.title.lower() if tab.title in ("Start", "Aufnahme") else tab.title
             tab._tab_label.set_label(text)
-            tab._tab_label.set_width_chars(min(len(text), 18))   # sonst kürzt das Notebook auf „…“
             tab._tab_label.set_tooltip_text(tab.title)
 
     def sync_actions(self, tab=None, force=False):

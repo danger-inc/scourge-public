@@ -375,7 +375,7 @@ def default_for(desktop_id):
 
 
 def icon_widget(key, glyph, size=48):
-    f = icons.preview_file(key)
+    f = icons.small_file(key, size * 2) or icons.preview_file(key)     # kleine PNG statt 8-MB-SVG
     if f:
         try:
             tex = Gdk.Texture.new_from_filename(f)
@@ -738,9 +738,11 @@ class SuiteApps(ToolPage):
         Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(path).get_uri(), None)
 
     def apply_all(self):
-        changed = icons.apply_all()
-        self.tab.notify("Icons übernommen" if changed else "Alle Icons sind schon aktuell")
-        self.fill()
+        def work():
+            changed = icons.apply_all()
+            GLib.idle_add(lambda: (self.tab.notify("Icons übernommen" if changed else "Alle Icons sind schon aktuell"),
+                                   self.fill(), False)[-1])
+        threading.Thread(target=work, daemon=True).start()
 
     def pick_icon(self, key):
         f = Gtk.FileFilter(name="Icon (SVG, PNG)")
@@ -755,13 +757,16 @@ class SuiteApps(ToolPage):
                 path = d.open_finish(res).get_path()
             except GLib.Error:
                 return
-            try:
-                icons.set_custom(key, path)
-            except (OSError, ValueError) as e:
-                self.tab.notify(f"Icon nicht übernommen: {e}")
-                return
-            self.tab.notify(f"{key}: neues Icon gesetzt (Starter/Taskleiste ggf. nach Neustart der App)")
-            self.fill()
+            self.tab.notify(f"{key}: Icon wird übernommen …")
+
+            def work():            # erzeugt alle Theme-Größen (bei großen SVGs ein paar Sekunden)
+                try:
+                    icons.set_custom(key, path)
+                    msg = f"{key}: neues Icon gesetzt (Starter/Taskleiste ggf. nach Neustart der App)"
+                except Exception as e:  # noqa: BLE001
+                    msg = f"Icon nicht übernommen: {e}"
+                GLib.idle_add(lambda: (self.tab.notify(msg), self.fill(), False)[-1])
+            threading.Thread(target=work, daemon=True).start()
         dlg.open(self.tab.win, None, done)
 
     def reset_icon(self, key):

@@ -58,6 +58,7 @@ def app_path(cmd):
     return local if os.access(local, os.X_OK) else shutil.which(cmd)
 
 
+ICON_PX = 20       # eigene App-Icons in der Leiste (≈ Höhe der 18-px-Symbolschrift)
 PREFS = os.path.expanduser("~/.config/scourge/drawer.json")
 
 
@@ -65,14 +66,15 @@ def custom_icon(cmd):
     """Eigenes Icon aus ~/.config/ist-icons (software → suite-apps) als kleines Bild, sonst None."""
     try:
         import icons
-        f = icons.custom_file(cmd)
+        f = icons.small_file(cmd, ICON_PX * 2)          # kleine Theme-PNG statt der 8-MB-SVG
         if not f:
             return None
-        pic = Gtk.Picture.new_for_paintable(Gdk.Texture.new_from_filename(f))
-        pic.set_size_request(26, 26)
-        pic.set_can_shrink(True)
-        pic.set_content_fit(Gtk.ContentFit.CONTAIN)
-        return pic
+        from gi.repository import GdkPixbuf
+        pb = GdkPixbuf.Pixbuf.new_from_file_at_size(f, ICON_PX * 2, ICON_PX * 2)   # ×2: scharf bei Skalierung
+        img = Gtk.Image.new_from_paintable(Gdk.Texture.new_for_pixbuf(pb))
+        img.set_pixel_size(ICON_PX)                     # feste Größe wie die Symbole der anderen Apps
+        img.set_size_request(26, -1)
+        return img
     except Exception:  # noqa: BLE001
         return None
 
