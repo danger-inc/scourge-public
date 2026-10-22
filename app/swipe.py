@@ -261,6 +261,8 @@ class SwipeBack:
         while w is not None and w is not self.bin:
             if self.blocked and self.blocked(w):
                 return True
+            if getattr(w, "swipe_owns_h", False):        # z. B. Fortschrittsbalken: waagrecht = spulen
+                return True
             if isinstance(w, Gtk.ScrolledWindow):
                 a = w.get_hadjustment()
                 if a.get_upper() - a.get_lower() > a.get_page_size() + 1:
