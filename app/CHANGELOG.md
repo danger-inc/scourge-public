@@ -1,5 +1,18 @@
 # scourge – Änderungen
 
+## 2.9.0 (2026-10-22)
+- **Apps installieren mit einem Klick**: In der Apps-Leiste links hat jede App, die fehlt, rechts einen kleinen
+  Knopf 󰇚. scourge lädt sie dann von GitHub und installiert sie im Hintergrund (Fortschritt steht unter dem
+  Namen). Fehlen Systempakete, öffnet ein zweiter Klick die Installation im Terminal (dort fragt sie nach sudo).
+- **Alte Namen werden erkannt**: Ist eine App noch unter einem früheren Namen installiert (wallpapaer, filewise,
+  kalender, textwise, musicminus), steht „früher …“ darunter. Die Installation räumt den alten Menüeintrag, das
+  alte Icon und den alten Hintergrunddienst weg, übernimmt z. B. das Stil-KI-Modell von wallpapaer und lässt den
+  alten Befehl auf die neue App zeigen – eigene Tastenkürzel gehen also weiter. Deine Daten bleiben.
+- **Updates für alle Apps an einer Stelle**: Unter den Apps steht „nach updates suchen“ bzw. **„updates
+  installieren“** mit der Liste der Apps, für die es eine neue Version gibt. Ein Klick installiert alle
+  nacheinander; Apps, die nur im Hintergrund laufen, starten danach gleich mit der neuen Version, bei offenen
+  Fenstern zeigt der Knopf 󰑓 „neu starten“. Einzelne Updates gehen auch über den Knopf 󰚰 neben der App.
+
 ## 2.8.0 (2026-10-22)
 - **Neu: Hyprland** (Startseite → software): alle Tastenkürzel aus der hyprland.lua verständlich beschrieben,
   nach Rubriken sortiert und durchsuchbar (z. B. „screenshot“ oder „Super+M“) – neue Kürzel erscheinen von
