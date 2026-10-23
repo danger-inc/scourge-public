@@ -144,6 +144,11 @@ PREFILL = {"email": ("mail", "check"), "domain": ("dom", "check"), "username": (
 
 
 def prefill(page, key, value):
+    if key in ("folder", "secrets") and hasattr(page, "folder_lbl"):     # Ordner (z. B. aus filist): gleich prüfen
+        page.folder = value
+        page.folder_lbl.set_label(value.replace(os.path.expanduser("~"), "~", 1))
+        GLib.idle_add(lambda: (page.scan(), False)[1])
+        return
     field, method = PREFILL.get(key, (None, None))
     w = getattr(page, field, None) if field else None
     if w is None:

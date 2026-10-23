@@ -136,7 +136,7 @@ def mark_seen(key, version):
 REPOS = {
     "scourge": ("app/VERSION", ("invincible-nix/scourge", "invincible-nix/scourge-public")),
     "notist": ("app/VERSION", ("invincible-nix/notist", "invincible-nix/notist-public")),
-    "filist": ("app/VERSION", ("invincible-nix/filist",)),
+    "filist": ("app/VERSION", ("invincible-nix/filist", "invincible-nix/filist-public")),
     "musicalist": ("app/music/VERSION", ("invincible-nix/musicalist", "invincible-nix/musicalist-public")),
     "datist": ("app/calendar/VERSION", ("invincible-nix/datist",)),
     "wallist": ("app/wallist/VERSION", ("invincible-nix/wallist",)),
