@@ -55,6 +55,8 @@ COMMANDS = [
     (r"datist", "apps", "datist (Kalender) ein/aus"),
     (r"mailist", "apps", "mailist (Mail) ein/aus"),
     (r"sharist", "apps", "sharist (Quick Share) ein/aus"),
+    (r"linguist --selection", "apps", "linguist: markierten Text übersetzen"),
+    (r"linguist", "apps", "linguist (Übersetzer) ein/aus"),
     (r"notist", "apps", "notist (Notizen) öffnen"),
     (r"filist|thunar|nautilus|dolphin", "apps", "Dateimanager"),
     (r"scourge", "apps", "scourge öffnen"),

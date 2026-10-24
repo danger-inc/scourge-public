@@ -134,6 +134,8 @@ SUITE = [
      "~/.config/mailist"),
     ("sharist", "󰒊", "sharist", "Quick Share mit Android-Handys (Super+D)", ["sharist"],
      "Name, Ordner und Sichtbarkeit im Tab „empfangen“", "~/.local/share/sharist/VERSION", "~/.config/sharist"),
+    ("linguist", "󰗊", "linguist", "Übersetzer, Hover in der Bildschirmecke (Super+T)", ["linguist"], ["linguist", "--settings"],
+     "~/.local/share/linguist/VERSION", "~/.config/linguist"),
 ]
 
 
@@ -157,6 +159,8 @@ ADMIN = {
                     cache=("~/.cache/mailist", ("mail.db", "mail.db-wal", "mail.db-shm")), repo="~/Projects/mailist"),
     "sharist": dict(proc=r"/sharist/sharist\.py", log=f"{RUN}/sharist.log", restart=["sharist", "--daemon"],
                     repo="~/Projects/sharist"),
+    "linguist": dict(proc=r"/linguist/linguist\.py", log=f"{RUN}/linguist.log", restart=["linguist", "--daemon"],
+                     repo="~/Projects/linguist"),
 }
 
 

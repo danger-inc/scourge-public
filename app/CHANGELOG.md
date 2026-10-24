@@ -1,5 +1,12 @@
 # scourge – Änderungen
 
+## 2.10.0 (2026-10-24)
+- **linguist in der Suite**: Der neue Übersetzer steht in der Apps-Leiste, unter „software“ (Installieren, Updates,
+  Neustart, Einstellungen), bei den Suite-Icons und in der Veröffentlichen-Liste. Maus in die untere rechte
+  Bildschirmecke → Übersetzer-Karte (Hover, in den linguist-Einstellungen einschaltbar). Super+T öffnet das Fenster,
+  Super+Umschalt+T übersetzt den markierten Text. Der Knopf „übersetzer“ in notist und mailist zeigt dann an, ob
+  Hover an ist.
+
 ## 2.9.0 (2026-10-22)
 - **Apps installieren mit einem Klick**: In der Apps-Leiste links hat jede App, die fehlt, rechts einen kleinen
   Knopf 󰇚. scourge lädt sie dann von GitHub und installiert sie im Hintergrund (Fortschritt steht unter dem

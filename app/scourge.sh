@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+[ "${1:-}" = --quit ] || { [ -x "$HOME/.local/bin/linguist" ] && "$HOME/.local/bin/linguist" --daemon >/dev/null 2>&1 & }   # linguist (Übersetzer) läuft immer mit
 # Starter für Scourge. Läuft Scourge schon (auch unsichtbar im Hintergrund), geht der Aufruf direkt per D-Bus
 # hin – ohne Python-/GTK-Start, das Fenster ist sofort da. Sonst wird Scourge gestartet.
 #   scourge [datei …]   scourge --daemon   scourge --quit

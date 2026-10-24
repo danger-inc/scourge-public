@@ -56,8 +56,10 @@ APPS = {
                     repos=("mailist", "mailist-public"), proc=r"/mailist/mailist\.py"),
     "sharist": dict(cmd="sharist", version="~/.local/share/sharist/VERSION",
                     repos=("sharist",), proc=r"/sharist/sharist\.py"),
+    "linguist": dict(cmd="linguist", version="~/.local/share/linguist/VERSION",
+                     repos=("linguist",), proc=r"/linguist/linguist\.py"),
 }
-ORDER = ("scourge", "notist", "filist", "musicalist", "datist", "wallist", "mailist", "sharist")
+ORDER = ("scourge", "notist", "filist", "musicalist", "datist", "wallist", "mailist", "sharist", "linguist")
 
 
 # ---------------- Zustand ----------------
