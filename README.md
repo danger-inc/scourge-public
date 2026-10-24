@@ -9,7 +9,7 @@ videos cut (edit videos), build memes, generate gradients & ascii art – a gtk4
 the repository is public – no account needed. clone it with git (package `git`):
 
 ```bash
-git clone https://github.com/invincible-nix/scourge-public ~/scourge-src   # download once
+git clone https://github.com/danger-inc/scourge-public ~/scourge-src   # download once
 cd ~/scourge-src
 ./install.sh
 ```
