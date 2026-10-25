@@ -134,15 +134,16 @@ def mark_seen(key, version):
 # ---------- Gibt es eine neuere Version? ----------
 # App → (Pfad der VERSION im Repo, Repos in Prüf-Reihenfolge: privat, dann öffentliche Ausgabe)
 REPOS = {
-    "scourge": ("app/VERSION", ("invincible-nix/scourge", "invincible-nix/scourge-public")),
-    "notist": ("app/VERSION", ("invincible-nix/notist", "invincible-nix/notist-public")),
-    "filist": ("app/VERSION", ("invincible-nix/filist", "invincible-nix/filist-public")),
-    "musicalist": ("app/music/VERSION", ("invincible-nix/musicalist", "invincible-nix/musicalist-public")),
-    "datist": ("app/calendar/VERSION", ("invincible-nix/datist",)),
-    "wallist": ("app/wallist/VERSION", ("invincible-nix/wallist",)),
-    "mailist": ("app/mailist/VERSION", ("invincible-nix/mailist", "invincible-nix/mailist-public")),
-    "sharist": ("app/sharist/VERSION", ("invincible-nix/sharist",)),
-    "linguist": ("app/linguist/VERSION", ("danger-inc/linguist",)),
+    "scourge": ("app/VERSION", ("danger-inc/scourge", "invincible-nix/scourge", "danger-inc/scourge-public", "invincible-nix/scourge-public",)),
+    "notist": ("app/VERSION", ("danger-inc/notist", "invincible-nix/notist", "danger-inc/notist-public", "invincible-nix/notist-public",)),
+    "filist": ("app/VERSION", ("danger-inc/filist", "invincible-nix/filist", "danger-inc/filist-public", "invincible-nix/filist-public",)),
+    "musicalist": ("app/music/VERSION", ("danger-inc/musicalist", "invincible-nix/musicalist", "danger-inc/musicalist-public", "invincible-nix/musicalist-public",)),
+    "datist": ("app/calendar/VERSION", ("danger-inc/datist", "invincible-nix/datist",)),
+    "wallist": ("app/wallist/VERSION", ("danger-inc/wallist", "invincible-nix/wallist",)),
+    "mailist": ("app/mailist/VERSION", ("danger-inc/mailist", "invincible-nix/mailist", "danger-inc/mailist-public", "invincible-nix/mailist-public",)),
+    "sharist": ("app/sharist/VERSION", ("danger-inc/sharist", "invincible-nix/sharist",)),
+    "linguist": ("app/linguist/VERSION", ("danger-inc/linguist", "invincible-nix/linguist",)),
+    "inquirist": ("app/inquirist/VERSION", ("danger-inc/inquirist", "invincible-nix/inquirist",)),
 }
 UPDATE_FILE = os.path.expanduser("~/.cache/ist-updates.json")
 UPDATE_EVERY = 6 * 3600
@@ -150,10 +151,35 @@ UPDATE_HINT = "./update.sh im repo-ordner"
 _updates = {}          # app → neuere Version (für das Changelog-Fenster)
 
 
+TOKEN_FILE = os.path.expanduser("~/.config/ist-github-token")
+
+
+def save_token(tok):
+    """Zugangsschlüssel (GitHub-Token mit Lesezugriff) merken – für private Repos, vor allem unter Windows ohne gh."""
+    os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+    tok = (tok or "").strip()
+    if tok:
+        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+            f.write(tok)
+        try:
+            os.chmod(TOKEN_FILE, 0o600)
+        except OSError:
+            pass
+    elif os.path.exists(TOKEN_FILE):
+        os.remove(TOKEN_FILE)
+
+
 def _token():
     tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if tok:
         return tok
+    try:
+        with open(TOKEN_FILE, encoding="utf-8") as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
     import shutil
     import subprocess
     gh = shutil.which("gh")
@@ -277,38 +303,63 @@ def _installer():
     return _installer_mod or None
 
 
+def _zip_download(repo, dest, token):
+    """Repo-Archiv laden. (ok, fehler) – fehler: 'auth' (privat/ohne Zugriff), 'net' oder None."""
+    import urllib.error
+    import urllib.request
+    headers = {"User-Agent": "ist-update"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        req = urllib.request.Request(f"https://api.github.com/repos/{repo}/zipball", headers=headers)
+        with urllib.request.urlopen(req, timeout=90) as r, open(dest, "wb") as f:
+            f.write(r.read())
+        return True, None
+    except urllib.error.HTTPError as e:
+        return False, "auth" if e.code in (401, 403, 404) else "net"
+    except OSError:
+        return False, "net"
+
+
 def windows_install(key, update=True, step=None):
     """Windows (blockierend, im Thread): Repo-Archiv von GitHub laden, entpacken, install-windows.ps1 in einem eigenen
     Konsolenfenster ausführen und auf das Ende warten. update=True → ohne Rückfragen (-Update).
-    Gibt (ok, Text) zurück."""
+    Private Repos gehen mit Token (Umgebung, gh oder gespeichert, siehe save_token), sonst die öffentliche Ausgabe.
+    Gibt (ok, Text) zurück; Text beginnt mit „kein Zugriff“, wenn ein Token fehlt."""
     import subprocess
     import tempfile
-    import urllib.request
     import zipfile
     step = step or (lambda t: None)
     try:
         tmp = tempfile.mkdtemp(prefix="ist-update-")
         zpath = os.path.join(tmp, "repo.zip")
         step("lädt …")
-        ok = False
+        token = _token()
+        ok, why = False, None
         for repo in REPOS[key][1]:
-            try:
-                req = urllib.request.Request(f"https://api.github.com/repos/{repo}/zipball",
-                                             headers={"User-Agent": "ist-update"})
-                with urllib.request.urlopen(req, timeout=90) as r, open(zpath, "wb") as f:
-                    f.write(r.read())
-                ok = True
+            for tok in ((token, None) if token else (None,)):
+                ok, e = _zip_download(repo, zpath, tok)
+                if ok:
+                    break
+                why = why if why == "net" else e
+            if ok:
                 break
-            except OSError:
-                continue
         if not ok:
-            return False, "Download fehlgeschlagen (kein Zugriff aufs Repo)"
+            if why == "net":
+                return False, "Download fehlgeschlagen (keine Verbindung zu GitHub?)"
+            return False, ("kein Zugriff aufs Repo – privat: GitHub-Token nötig" if not token
+                           else "kein Zugriff aufs Repo – Token ohne Leserecht?")
         with zipfile.ZipFile(zpath) as z:
             z.extractall(tmp)
         ps1 = next((os.path.join(d, "install-windows.ps1") for d, _s, fs in os.walk(tmp)
                     if "install-windows.ps1" in fs), None)
         if not ps1:
-            return False, "Im Download fehlt install-windows.ps1"
+            dest = os.path.join(os.path.expanduser("~"), "Downloads", f"{key}-quelle")
+            top = next(os.path.join(tmp, d) for d in os.listdir(tmp) if os.path.isdir(os.path.join(tmp, d)))
+            import shutil
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(top, dest)
+            return False, f"heruntergeladen nach Downloads\\{key}-quelle – {key} hat noch keinen Windows-Installer"
         step("installiert …")
         cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1] + (["-Update"] if update else [])
         rc = subprocess.call(cmd, creationflags=0x00000010)      # CREATE_NEW_CONSOLE: Fortschritt im eigenen Fenster

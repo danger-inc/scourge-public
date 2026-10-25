@@ -12,6 +12,11 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
 
+try:
+    import glass
+except ImportError:      # ohne Cursor-Ebene zeichnet der Direkt-Text seinen Cursor selbst
+    glass = None
+
 VIEWER_CSS = """
 .pdf-bg { background-color: alpha(black, 0.18); border-radius: 10px; }
 .pdf-page { background-color: white; box-shadow: 0 2px 10px alpha(black, 0.45); }
@@ -351,6 +356,7 @@ class PdfView(Gtk.Box):
         self._refs = {}
         self.dirty = False
         self._drag = None
+        self._caret_at = None
         self.edit = None        # Text, der gerade direkt auf der Seite getippt wird (dict)
         self.ghost = None       # (Seite, x, y): Vorschau-Cursor des Text-Werkzeugs unter der Maus
         self._blink_id = None
@@ -1661,6 +1667,10 @@ class PdfView(Gtk.Box):
         self.areas[e["i"]].queue_draw()
         return True
 
+    def ist_caret(self):
+        """Für die animierte Cursor-Ebene (glass.py): Cursor des Direkt-Textes auf der Seite."""
+        return self._caret_at if self.edit else None
+
     def _blink(self):
         if not self.edit:
             self._blink_id = None
@@ -1747,7 +1757,8 @@ class PdfView(Gtk.Box):
                 strong, _weak = lay.get_cursor_pos(bi)
                 caret = (ox * z + strong.x / Pango.SCALE, oy * z + strong.y / Pango.SCALE, strong.height / Pango.SCALE)
             pos += len(line) + 1
-        if caret and self._caret_on:
+        self._caret_at = (self.areas[e["i"]], caret[0], caret[1], caret[2], (r, g, b)) if caret else None
+        if caret and self._caret_on and not (glass and glass.caret_active(self)):      # sonst zeichnet die Cursor-Ebene (glass.py)
             cx, cy, ch = caret
             cr.set_source_rgb(r, g, b)
             cr.rectangle(round(cx), cy, max(1.0, z * 0.9), ch)

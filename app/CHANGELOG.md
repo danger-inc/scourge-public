@@ -1,5 +1,12 @@
 # scourge – Änderungen
 
+## 2.11.1 (2026-10-25)
+- **Windows**: Speichern brach bei Zeichen wie „☑“ mit einem Zeichensatz-Fehler ab; Textdateien sind dort jetzt UTF-8.
+- **Windows**: Der Glas-Schalter funktioniert dort wieder (nur die Unterlage, die das Einfrieren auslöste, bleibt aus).
+- **Windows**: Die Apps-Leiste zeigt jetzt alle Suite-Apps und lässt sie herunterladen. Private Repos gehen mit
+  einem GitHub-Token (Lesezugriff): schlägt der Download mit „kein Zugriff“ fehl, fragt der Knopf danach.
+  Apps ohne Windows-Installer landen als Quelltext in Downloads.
+
 ## 2.11.0 (2026-10-25)
 - **scourge-pdf – der schlanke PDF-Editor**: PDFs öffnen jetzt in einem eigenen, sofort startenden Programm
   (`scourge-pdf`, eigener Prozess und Menü-Eintrag, wartet im Hintergrund). Aus filist, per `scourge datei.pdf` und

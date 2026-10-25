@@ -23,6 +23,7 @@ SUITE = {
     "mailist": ("mailist", "mailist.desktop"),
     "sharist": ("sharist", "sharist.desktop"),
     "linguist": ("linguist", "linguist.desktop"),
+    "inquirist": ("inquirist", "inquirist.desktop"),
 }
 EXTS = (".svg", ".png")
 # Feste Größen fürs Theme: Starter (rofi), Taskleiste und die Apps-Leiste laden dann eine winzige PNG statt die

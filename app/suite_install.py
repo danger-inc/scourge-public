@@ -62,8 +62,10 @@ APPS = {
                     repos=("sharist",), proc=r"/sharist/sharist\.py"),
     "linguist": dict(cmd="linguist", version="~/.local/share/linguist/VERSION",
                      repos=("linguist",), proc=r"/linguist/linguist\.py"),
+    "inquirist": dict(cmd="inquirist", version="~/.local/share/inquirist/VERSION",
+                      repos=("inquirist",), proc=r"/inquirist/inquirist\.py"),
 }
-ORDER = ("scourge", "notist", "filist", "musicalist", "datist", "wallist", "mailist", "sharist", "linguist")
+ORDER = ("scourge", "notist", "filist", "musicalist", "datist", "wallist", "mailist", "sharist", "linguist", "inquirist")
 
 
 # ---------------- Zustand ----------------
@@ -289,7 +291,8 @@ def install(key, step):
         after = installed_version(key)
         if ok and not after:
             ok, text = False, "installiert, aber keine Version gefunden"
-        return ok, (f"v{before} → v{after}" if ok and before and before != after else f"v{after} installiert") if ok else text, None
+        hint = "token" if not ok and text.startswith("kein Zugriff") else None
+        return ok, (f"v{before} → v{after}" if ok and before and before != after else f"v{after} installiert") if ok else text, hint
     with open(log_path(key), "w") as log:
         log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {key}  (vorher: {before or state(key)})\n")
         try:
@@ -468,8 +471,6 @@ class Manager:
         if not SUPPORTED:
             return
         for k in keys:
-            if WINDOWS and k not in WIN_APPS:
-                continue
             if k not in self.queue and not self.info[k].get("busy"):
                 self.queue.append(k)
                 self.info[k].update(busy=True, msg="wartet …", status=None, hint=None)

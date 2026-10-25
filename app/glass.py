@@ -5,11 +5,26 @@ import json, os, subprocess, sys
 
 from gi.repository import Gio, GLib, Graphene, Gtk
 
+# Windows: Python öffnet Textdateien dort mit cp1252 – JSON mit „☑“, Umlauten in Namen usw. brach beim Speichern ab
+# (UnicodeEncodeError). Alle Apps importieren glass früh, also hier einmal UTF-8 als Standard setzen.
+if os.name == "nt":
+    import builtins
+    import io
+    _open = builtins.open
+
+    def _utf8_open(file, mode="r", buffering=-1, encoding=None, errors=None, *a, **k):
+        if encoding is None and "b" not in mode:
+            encoding = "utf-8"
+            if errors is None and not any(c in mode for c in "wax+"):
+                errors = "replace"
+        return _open(file, mode, buffering, encoding, errors, *a, **k)
+    builtins.open = io.open = _utf8_open
+
 SETTINGS = os.path.expanduser("~/.config/rice-apps/settings.json")
 
-# Windows: kein Glas. Durchsichtige GTK-Fenster ließen die App dort einfrieren, und weil der Zustand in
-# settings.json liegt, half auch kein Neuinstallieren. Schalter ausgeblendet, gespeicherter Wert ignoriert.
-AVAILABLE = not (os.name == "nt" or sys.platform.startswith(("win", "cygwin", "msys")))
+# Windows: Glas an (alpha-Hintergrund, wie vor der Unterlage). Eingefroren ist dort nur die Unterlage (BlurMarker:
+# push_copy/append_paste, GTK >= 4.22) – die bleibt unter Windows aus, siehe SUPPORTED.
+AVAILABLE = True
 
 # Nur Hintergründe werden durchsichtig; Schrift, Rahmen und Akzentfarben bleiben voll deckend.
 # :not(...) sorgt dafür, dass Hover-/Aktiv-Zustände ihre volle Akzentfüllung behalten.
@@ -136,7 +151,7 @@ _TINY = 0.001
 SUPPORTED = hasattr(Gtk.Snapshot, "push_copy") and hasattr(Gtk.Snapshot, "append_paste")   # GTK >= 4.22
 # Der Software-Renderer (GSK_RENDERER=cairo, z. B. ricetui/musicd) kann die riesige Fläche nicht anlegen
 # („drawing failure … too big“) – dann bleibt das ganze Fenster leer. Dort gilt weiter backdrop-filter aus GLASS_CSS.
-if os.environ.get("GSK_RENDERER", "").strip().lower() == "cairo":
+if os.environ.get("GSK_RENDERER", "").strip().lower() == "cairo" or os.name == "nt" or sys.platform.startswith(("win", "cygwin", "msys")):
     SUPPORTED = False
 
 
@@ -225,3 +240,284 @@ class GlassToggle(Gtk.ToggleButton):
         if on != self.window.has_css_class("glass"):
             self.apply(on)
         return False
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Animierter Textcursor wie in kitty (cursor_trail): Ein Balken, dessen vier Ecken dem Ziel verschieden schnell
+# folgen – wer viel tippt oder löscht, sieht einen dicken Schmierstreifen, der Stillstand läuft zum Strich zusammen.
+# Gilt für JEDES Textfeld jedes Fensters, das glass importiert (Gtk.Text/Entry/TextView). Der GTK-eigene Cursor
+# wird nur im gerade bearbeiteten Feld unsichtbar gemacht (Klasse ist-caret), alles andere bleibt unberührt.
+# Abschalten: Umgebungsvariable IST_NO_CARET=1.
+import math, time, weakref
+
+from gi.repository import Gdk
+
+CARET_WIDTH = 2.0          # Breite des Balkens in Pixeln
+CARET_FAST = 0.045         # Zeitkonstante (s) der vorauseilenden Ecken
+CARET_SLOW = 0.14          # … der nachziehenden Ecken (je größer der Abstand, desto dicker der Streifen)
+CARET_IDLE = 0.6           # Ruhe (s) bis zum Blinken
+CARET_BLINK = 0.53         # Halbperiode des Blinkens (s)
+CARET_CSS = """
+.ist-caret, .ist-caret text { caret-color: transparent; -gtk-secondary-caret-color: transparent; }
+"""
+
+
+def _caret_widget(w):
+    """Ist w ein bearbeitbares Textfeld, in dem ein Cursor sichtbar ist?"""
+    if isinstance(w, Gtk.Text):
+        return w.get_editable()
+    if isinstance(w, Gtk.TextView):
+        return w.get_editable() and w.get_cursor_visible()
+    return callable(getattr(w, "ist_caret", None))      # eigene Zeichenfläche mit Cursor: siehe caret_active()
+
+
+def caret_active(w):
+    """Für selbst gezeichnete Textfelder: True, wenn die Cursor-Ebene den Cursor übernimmt (dann nicht selbst zeichnen)."""
+    root = w.get_root()
+    return root is not None and getattr(root, "_ist_caret", None) is not None and not os.environ.get("IST_NO_CARET")
+
+
+def _caret_rect(w):
+    """(Widget, x, y, h, Farbe|None) des Cursors in Koordinaten des Widgets oder None (z. B. weggescrollt).
+    Eigene Zeichenflächen liefern das über w.ist_caret() -> (Widget, x, y, h, (r, g, b)) | None."""
+    try:
+        hook = getattr(w, "ist_caret", None)
+        if callable(hook):
+            return hook()
+        if isinstance(w, Gtk.Text):
+            r = w.compute_cursor_extents(w.get_position())[0]
+            x, y, h = r.get_x(), r.get_y(), r.get_height()
+        else:
+            buf = w.get_buffer()
+            r = w.get_iter_location(buf.get_iter_at_mark(buf.get_insert()))
+            x, y = w.buffer_to_window_coords(Gtk.TextWindowType.WIDGET, r.x, r.y)
+            h = r.height
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if h <= 0 or y + h < 0 or y > w.get_height() or x < -2 or x > w.get_width() + 2:
+        return None
+    return w, x, y, h, None
+
+
+class CaretTrail(Gtk.DrawingArea):
+    """Liegt als durchklickbare Ebene über dem Fensterinhalt und zeichnet den Cursor des fokussierten Textfelds."""
+
+    def __init__(self, win):
+        super().__init__(can_target=False, can_focus=False, hexpand=True, vexpand=True)
+        self._win = weakref.ref(win)
+        self._tgt = None                       # (x, y, h) in eigenen Koordinaten
+        self._cur = None                       # vier Ecken [[x, y] …] (oben links, oben rechts, unten rechts, unten links)
+        self._dir = (0.0, 0.0)
+        self._widget = None                    # weakref auf das Feld, dessen Cursor wir zeichnen
+        self._moved = time.monotonic()
+        self._on = True
+        self._ticking = False
+        self._last = 0
+        self._poll_id = 0
+        self._color = (0.9, 0.9, 0.9, 1.0)
+        self.set_draw_func(self._draw)
+        self.connect("map", self._start)
+        self.connect("unmap", self._stop)
+
+    # --- Abfrage des fokussierten Felds ------------------------------------------------------------------
+    def _start(self, *_):
+        if not self._poll_id:
+            self._poll_id = GLib.timeout_add(40, self._poll)
+
+    def _stop(self, *_):
+        if self._poll_id:
+            GLib.source_remove(self._poll_id)
+            self._poll_id = 0
+        self._release()
+
+    def _release(self):
+        w = self._widget() if self._widget else None
+        if w is not None:
+            w.remove_css_class("ist-caret")
+        self._widget = None
+        if self._tgt is not None:
+            self._tgt = self._cur = None
+            self.queue_draw()
+
+    def _poll(self):
+        win = self._win()
+        if win is None:
+            self._poll_id = 0
+            return False
+        w = win.get_focus() if win.is_active() else None
+        if w is None or not _caret_widget(w) or not w.get_mapped() or w.get_native() is not win.get_native():
+            if self._widget is not None:
+                self._release()
+            return True
+        old = self._widget() if self._widget else None
+        if old is not w:
+            if old is not None:
+                old.remove_css_class("ist-caret")
+            w.add_css_class("ist-caret")
+            self._widget = weakref.ref(w)
+            self._cur = self._tgt = None        # anderes Feld: kein Streifen quer über das Fenster, sondern neu erscheinen
+        r = _caret_rect(w)
+        host = r[0] if r else w
+        p = host.compute_point(self, Graphene.Point().init(r[1], r[2])) if r else None
+        sw = host.get_ancestor(Gtk.ScrolledWindow) if p and p[0] else None
+        if sw is not None:                      # im Scrollbereich: Cursor außerhalb des Sichtfensters bleibt unsichtbar
+            b = sw.compute_bounds(self)
+            if b[0] and not (b[1].get_y() - 1 <= p[1].y and p[1].y + r[3] <= b[1].get_y() + b[1].get_height() + 1):
+                p = None
+        if p is None or not p[0]:
+            if self._tgt is not None:
+                self._tgt = self._cur = None
+                self.queue_draw()
+            return True
+        if r[4]:
+            self._color = (*r[4], 1.0)
+        else:
+            rgba = w.get_color()
+            self._color = (rgba.red, rgba.green, rgba.blue, rgba.alpha)
+        tgt = (p[1].x, p[1].y, r[3])
+        if tgt != self._tgt:
+            self._retarget(tgt)
+        else:
+            self._blink()
+        return True
+
+    def _retarget(self, tgt):
+        now = time.monotonic()
+        old, self._tgt = self._tgt, tgt
+        self._moved, self._on = now, True
+        x, y, h = tgt
+        corners = [[x, y], [x + CARET_WIDTH, y], [x + CARET_WIDTH, y + h], [x, y + h]]
+        if self._cur is None or old is None:
+            self._cur = corners                 # erstes Erscheinen: kein Weg
+            self.queue_draw()
+            return
+        dx = (x + CARET_WIDTH / 2) - sum(c[0] for c in self._cur) / 4
+        dy = (y + h / 2) - sum(c[1] for c in self._cur) / 4
+        n = math.hypot(dx, dy)
+        if n < 1.5:
+            self._cur = corners
+            self.queue_draw()
+            return
+        self._dir = (dx / n, dy / n)
+        self._ensure_tick()
+
+    def _blink(self):
+        if self._tgt is None or self._ticking:
+            return
+        try:
+            blink = Gtk.Settings.get_default().props.gtk_cursor_blink
+        except AttributeError:
+            blink = True
+        idle = time.monotonic() - self._moved - CARET_IDLE
+        on = True if (not blink or idle < 0) else int(idle / CARET_BLINK) % 2 == 0
+        if on != self._on:
+            self._on = on
+            self.queue_draw()
+
+    # --- Animation ---------------------------------------------------------------------------------------
+    def _ensure_tick(self):
+        if not self._ticking:
+            self._ticking = True
+            self._last = 0
+            self.add_tick_callback(self._tick)
+
+    def _tick(self, _w, clock):
+        t = clock.get_frame_time()
+        dt = min((t - self._last) / 1e6, 0.1) if self._last else 1 / 60
+        self._last = t
+        if self._tgt is None or self._cur is None:
+            self._ticking = False
+            return GLib.SOURCE_REMOVE
+        x, y, h = self._tgt
+        goal = [(x, y), (x + CARET_WIDTH, y), (x + CARET_WIDTH, y + h), (x, y + h)]
+        cx, cy = x + CARET_WIDTH / 2, y + h / 2
+        far = 0.0
+        for c, g in zip(self._cur, goal):
+            # Ecken, die in Bewegungsrichtung vorn liegen, laufen schnell; die hinteren ziehen nach
+            lead = (g[0] - cx) * self._dir[0] + (g[1] - cy) * self._dir[1] >= 0
+            k = 1 - math.exp(-dt / (CARET_FAST if lead else CARET_SLOW))
+            c[0] += (g[0] - c[0]) * k
+            c[1] += (g[1] - c[1]) * k
+            far = max(far, abs(g[0] - c[0]), abs(g[1] - c[1]))
+        self._on = True
+        self._moved = time.monotonic()
+        self.queue_draw()
+        if far < 0.25:
+            self._cur = [list(g) for g in goal]
+            self._ticking = False
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
+
+    def _draw(self, _a, cr, _w, _h):
+        if self._cur is None or not self._on:
+            return
+        r, g, b, a = self._color
+        cr.set_source_rgba(r, g, b, a)
+        cr.move_to(*self._cur[0])
+        for c in self._cur[1:]:
+            cr.line_to(*c)
+        cr.close_path()
+        cr.fill()
+
+
+_caret_css_done = False
+
+
+def _caret_attach(win):
+    """Hängt die Cursor-Ebene über den Inhalt von win (einmal je Fenster)."""
+    global _caret_css_done
+    if getattr(win, "_ist_caret", None) is not None:
+        return
+    if not _caret_css_done:
+        _caret_css_done = True
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CARET_CSS.encode())
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_USER + 6)
+    trail = CaretTrail(win)
+    win._ist_caret = trail
+    wref = weakref.ref(win)
+
+    def host(*_):
+        win = wref()
+        if win is None:
+            return False
+        child = win.get_child()
+        if child is None or trail.get_root() is win:
+            return False                       # noch kein Inhalt, oder die Ebene steckt schon im Fenster
+        if trail.get_parent() is not None:
+            trail.get_parent().remove_overlay(trail)
+        if isinstance(child, Gtk.Overlay):
+            child.add_overlay(trail)
+        else:
+            win.set_child(None)
+            ov = Gtk.Overlay()
+            ov.set_child(child)
+            ov.add_overlay(trail)
+            win.set_child(ov)
+        return False
+
+    win.connect("notify::child", lambda *_: GLib.idle_add(host))
+    host()
+
+
+def _caret_scan():
+    if Gdk.Display.get_default() is None:
+        return True
+    for win in Gtk.Window.list_toplevels():
+        try:
+            _caret_attach(win)
+        except Exception:      # noqa: BLE001 – der Cursor ist Zierde und darf nie ein Fenster verhindern
+            pass
+    return True
+
+
+def enable_caret():
+    """Einmal je Prozess: alle (auch später geöffnete) Fenster bekommen den animierten Cursor."""
+    if os.environ.get("IST_NO_CARET") or getattr(enable_caret, "done", False) or Gtk.get_major_version() < 4:
+        return
+    enable_caret.done = True
+    GLib.timeout_add(400, _caret_scan)
+
+
+enable_caret()

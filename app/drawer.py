@@ -23,6 +23,7 @@ APPS = (
     ("mailist", "󰇮", "mailist", "Gmail, leicht löschen"),
     ("sharist", "󰒊", "sharist", "Quick Share mit dem Handy"),
     ("linguist", "󰗊", "linguist", "Übersetzer – Maus in die Ecke"),
+    ("inquirist", "󰍉", "inquirist", "Starter: Apps, Fenster, Dateien, Rechner"),
 )
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -165,8 +166,6 @@ class AppDrawer(Gtk.Box):
         title.add_css_class("drawer-title")
         panel.append(title)
         for cmd, icon, name, desc in APPS:
-            if os.name == "nt" and cmd not in si.WIN_APPS:     # nur, was es für Windows gibt
-                continue
             b = Gtk.Button(focus_on_click=False, hexpand=True)
             b.add_css_class("applink")
             row = Gtk.Box(spacing=10)
@@ -295,7 +294,7 @@ class AppDrawer(Gtk.Box):
                     inst.remove_css_class(c)
                 if glyph == "spin":
                     inst.add_css_class("busy")
-                elif glyph == "󰀦":
+                elif glyph in ("󰀦", "󰌆"):
                     inst.add_css_class("err")
                 elif glyph in ("󰚰", "󰑓"):
                     inst.add_css_class("upd")
@@ -311,13 +310,15 @@ class AppDrawer(Gtk.Box):
 
     def _look(self, cmd):
         """(Symbol | "spin" | None, Tooltip, Beschreibung) für die App-Zeile."""
-        if not si.SUPPORTED or cmd not in si.APPS or (os.name == "nt" and cmd not in si.WIN_APPS):
+        if not si.SUPPORTED or cmd not in si.APPS:
             return None, None, None
         info = self.mgr.info[cmd]
         if info.get("busy"):
             return "spin", f"{cmd}: {info.get('msg', '')}", info.get("msg")
         if info.get("status") == "err":
             tip = info.get("msg", "fehlgeschlagen")
+            if info.get("hint") == "token":
+                return "󰌆", f"{tip} – klick: GitHub-Token eingeben", tip
             if info.get("hint") == "packages":
                 return "󰀦", f"{tip} – klick: im terminal installieren (fragt nach systempaketen/sudo)", tip
             return "󰀦", f"{tip} – klick: nochmal versuchen", tip
@@ -384,6 +385,9 @@ class AppDrawer(Gtk.Box):
             return
         if info.get("restart"):
             return self.restart_app(cmd)
+        if info.get("status") == "err" and info.get("hint") == "token":
+            info["status"] = None
+            return self.ask_token(cmd)
         if info.get("status") == "err" and info.get("hint") == "packages":
             info["status"] = None
             if si.terminal_install(cmd):
@@ -392,6 +396,37 @@ class AppDrawer(Gtk.Box):
                 return
         self.mgr.install([cmd])
         self.app.notify(f"{cmd} wird installiert – läuft im hintergrund")
+
+    def ask_token(self, cmd):
+        """Privates Repo: GitHub-Token (nur Lesezugriff auf Inhalte) abfragen, speichern, Installation nochmal starten."""
+        import changelog
+        win = Gtk.Window(title="GitHub-Zugang", transient_for=self.app.win, modal=True, default_width=460)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=16, margin_bottom=16,
+                      margin_start=16, margin_end=16)
+        box.append(Gtk.Label(label=f"{cmd} liegt in einem privaten GitHub-Repo. Füge einen Token mit Lesezugriff "
+                                   "(Fine-grained, „Contents: Read-only“) ein. Er wird nur auf diesem Rechner gespeichert.",
+                             wrap=True, xalign=0))
+        entry = Gtk.PasswordEntry(show_peek_icon=True, activates_default=True)
+        box.append(entry)
+        row = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="abbrechen")
+        ok = Gtk.Button(label="speichern & installieren")
+        row.append(cancel)
+        row.append(ok)
+        box.append(row)
+        win.set_child(box)
+        win.set_default_widget(ok)
+
+        def go(*_):
+            tok = entry.get_text().strip()
+            if tok:
+                changelog.save_token(tok)
+                win.close()
+                self.mgr.install([cmd])
+                self.app.notify(f"{cmd} wird installiert – läuft im hintergrund")
+        ok.connect("clicked", go)
+        cancel.connect("clicked", lambda *_: win.close())
+        win.present()
 
     def restart_app(self, cmd):
         self.mgr.info[cmd]["restart"] = False

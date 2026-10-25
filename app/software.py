@@ -136,6 +136,8 @@ SUITE = [
      "Name, Ordner und Sichtbarkeit im Tab „empfangen“", "~/.local/share/sharist/VERSION", "~/.config/sharist"),
     ("linguist", "󰗊", "linguist", "Übersetzer, Hover in der Bildschirmecke (Super+T)", ["linguist"], ["linguist", "--settings"],
      "~/.local/share/linguist/VERSION", "~/.config/linguist"),
+    ("inquirist", "󰍉", "inquirist", "Starter: Apps, Fenster, Dateien, Rechner (Super+R)", ["inquirist"],
+     "Keine Einstellungen – Modi per Super+R, Tab, Umschalt+V, Punkt", "~/.local/share/inquirist/VERSION", "~/.config/inquirist"),
 ]
 
 
@@ -161,6 +163,8 @@ ADMIN = {
                     repo="~/Projects/sharist"),
     "linguist": dict(proc=r"/linguist/linguist\.py", log=f"{RUN}/linguist.log", restart=["linguist", "--daemon"],
                      repo="~/Projects/linguist"),
+    "inquirist": dict(proc=r"/inquirist/inquirist\.py", log=f"{RUN}/inquirist.log", restart=["inquirist", "--daemon"],
+                      repo="~/Projects/inquirist"),
 }
 
 
