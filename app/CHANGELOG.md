@@ -1,5 +1,9 @@
 # scourge – Änderungen
 
+## 2.11.4 (2026-10-25)
+- **Windows**: Schlägt die Installation einer App fehl, steht der Grund in der Meldung und im Log
+  (`<app>-install.log` im Benutzerordner).
+
 ## 2.11.3 (2026-10-25)
 - **Private Apps ohne `gh` installieren**: Bei „kein zugriff aufs repo“ fragt der Knopf jetzt nach einem GitHub-Token
   (Lesezugriff), und das Installieren/Aktualisieren nutzt den gespeicherten Token (vorher ging nur `gh auth login`).

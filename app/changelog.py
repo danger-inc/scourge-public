@@ -361,9 +361,21 @@ def windows_install(key, update=True, step=None):
             shutil.copytree(top, dest)
             return False, f"heruntergeladen nach Downloads\\{key}-quelle – {key} hat noch keinen Windows-Installer"
         step("installiert …")
-        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1] + (["-Update"] if update else [])
+        logf = os.path.join(os.path.expanduser("~"), f"{key}-install.log")
+        q = lambda p: "'" + p.replace("'", "''") + "'"
+        # Ausgabe zusätzlich in eine Logdatei, damit der Fehlergrund (FEHLER: …) in der Meldung steht
+        inner = f"& {q(ps1)}" + (" -Update" if update else "") + f" *>&1 | Tee-Object -FilePath {q(logf)}; exit $LASTEXITCODE"
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", inner]
         rc = subprocess.call(cmd, creationflags=0x00000010)      # CREATE_NEW_CONSOLE: Fortschritt im eigenen Fenster
-        return rc == 0, "installiert" if rc == 0 else f"Installation fehlgeschlagen (Code {rc})"
+        if rc == 0:
+            return True, "installiert"
+        why = ""
+        try:
+            lines = [l.strip() for l in open(logf, encoding="utf-8", errors="replace") if l.strip()]
+            why = next((l for l in reversed(lines) if "FEHLER" in l), lines[-1] if lines else "")[:160]
+        except OSError:
+            pass
+        return False, f"Installation fehlgeschlagen (Code {rc})" + (f": {why}" if why else "") + f" – Log: {logf}"
     except Exception as e:  # noqa: BLE001
         return False, f"Update fehlgeschlagen: {e}"
 
