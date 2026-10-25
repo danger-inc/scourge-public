@@ -316,6 +316,44 @@ def install(key, step):
     return True, (f"v{before} → v{after}" if before and before != after else f"v{after} installiert"), hint
 
 
+EXTRA_FILES = {"musicalist": ("de.invincible.Music.desktop",)}
+EXTRA_BINS = {"musicalist": ("rice-music",)}
+EXTRA_UNITS = {"filist": ("filist.service",)}
+
+
+def uninstall(key, log=None):
+    """Entfernt Programm, Starter, Menüeintrag, Icon und Dienst einer Suite-App (Code-Ordner → Papierkorb,
+    eigene Daten außerhalb davon bleiben). Blockiert – im Thread. Gibt (ok, text) zurück."""
+    if WINDOWS or key == "scourge" or key not in APPS:
+        return False, "nicht unterstützt"
+    a = APPS[key]
+    try:
+        import software
+        software.stop(a["proc"])
+    except Exception:  # noqa: BLE001
+        pass
+    for unit in EXTRA_UNITS.get(key, ()):
+        f = H(f"~/.config/systemd/user/{unit}")
+        if os.path.exists(f) and shutil.which("systemctl"):
+            subprocess.run(["systemctl", "--user", "disable", "--now", unit], capture_output=True, timeout=15)
+            _rm(f, log or open(os.devnull, "w"))
+    nul = log or open(os.devnull, "w")
+    for b in (a["cmd"],) + EXTRA_BINS.get(key, ()):
+        _rm(os.path.join(BIN, b), nul)
+    for d in (a["cmd"] + ".desktop",) + EXTRA_FILES.get(key, ()):
+        _rm(os.path.join(APPS_DIR, d), nul)
+    _rm(os.path.join(ICON_DIR, a["cmd"] + ".svg"), nul)
+    code = os.path.dirname(H(a["version"]))
+    if os.path.isdir(code):
+        try:
+            Gio.File.new_for_path(code).trash(None)
+        except GLib.Error:
+            shutil.rmtree(code, ignore_errors=True)
+    if shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", APPS_DIR], capture_output=True, timeout=15)
+    return (not os.path.exists(H(a["version"]))), "deinstalliert"
+
+
 def terminal_install(key):
     """Interaktive Installation im Terminal (Systempakete brauchen sudo). False, wenn nichts ging."""
     src = os.path.join(SRC_ROOT, key)
@@ -478,6 +516,22 @@ class Manager:
         if not self.worker:
             self.worker = threading.Thread(target=self._work, daemon=True)
             self.worker.start()
+
+    def uninstall(self, key):
+        """Im Hintergrund deinstallieren; danach Zustand neu melden."""
+        if self.info[key].get("busy"):
+            return
+        self.info[key].update(busy=True, msg="wird entfernt …", status=None, hint=None, restart=False)
+        self._emit(key)
+
+        def work():
+            try:
+                ok, text = uninstall(key)
+            except Exception as e:  # noqa: BLE001
+                ok, text = False, f"fehler: {e}"
+            self.info[key].update(busy=False, status=None if ok else "err", msg="" if ok else text, hint=None)
+            GLib.idle_add(self._emit, key)
+        threading.Thread(target=work, daemon=True).start()
 
     def _work(self):
         while self.queue:

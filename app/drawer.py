@@ -183,6 +183,9 @@ class AppDrawer(Gtk.Box):
             b.set_child(row)
             b.connect("clicked", lambda *_, c=cmd, nm=name: self.launch(c, nm))
             self.buttons.append((b, cmd, name))
+            rc = Gtk.GestureClick(button=3)
+            rc.connect("pressed", lambda g, n, x, y, c=cmd, nm=name, w=b: self.app_menu(w, c, nm, x, y))
+            b.add_controller(rc)
             line = Gtk.Box()
             line.append(b)
             inst = Gtk.Button(focus_on_click=False, valign=Gtk.Align.CENTER, visible=False)
@@ -396,6 +399,61 @@ class AppDrawer(Gtk.Box):
                 return
         self.mgr.install([cmd])
         self.app.notify(f"{cmd} wird installiert – läuft im hintergrund")
+
+    def app_menu(self, widget, cmd, name, x, y):
+        """Rechtsklick auf eine App: deinstallieren (nur wenn installiert)."""
+        if not si.SUPPORTED or cmd not in si.APPS or si.state(cmd) == "missing":
+            return
+        pop = Gtk.Popover(has_arrow=False, autohide=True)
+        pop.set_parent(widget)
+        pop.set_pointing_to(Gdk.Rectangle(x=int(x), y=int(y), width=1, height=1))
+        pop.add_css_class("kpop")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
+        op = Gtk.Button(label="󰉋  dateipfad öffnen", has_frame=False, halign=Gtk.Align.START)
+        op.connect("clicked", lambda *_: (pop.popdown(), self.open_path(cmd)))
+        box.append(op)
+        if os.name != "nt" and cmd != "scourge":
+            item = Gtk.Button(label=f"󰆴  {name} deinstallieren …", has_frame=False, halign=Gtk.Align.START)
+            item.connect("clicked", lambda *_: (pop.popdown(), self.confirm_uninstall(cmd, name)))
+            box.append(item)
+        pop.set_child(box)
+        pop.connect("closed", lambda p: GLib.idle_add(p.unparent))
+        pop.popup()
+
+    def open_path(self, cmd):
+        """Ordner mit dem Programmcode der App im Dateimanager öffnen."""
+        path = os.path.dirname(os.path.expanduser(si.APPS[cmd]["version"]))
+        if not os.path.isdir(path):
+            return self.app.notify(f"{cmd}: ordner nicht gefunden")
+        if os.name == "nt":
+            os.startfile(path)
+        else:
+            subprocess.Popen(["xdg-open", path], start_new_session=True, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+
+    def confirm_uninstall(self, cmd, name):
+        win = Gtk.Window(title=f"{name} deinstallieren", transient_for=self.app.win, modal=True, default_width=420)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=16, margin_bottom=16,
+                      margin_start=16, margin_end=16)
+        box.append(Gtk.Label(label=f"{name} wirklich deinstallieren? Programm, Starter und Menüeintrag werden "
+                                   "entfernt, das Programmverzeichnis landet im Papierkorb. Eigene Daten "
+                                   "außerhalb davon (z. B. Notizen, Kalender) bleiben erhalten.", wrap=True, xalign=0))
+        row = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="abbrechen")
+        ok = Gtk.Button(label="deinstallieren")
+        ok.add_css_class("destructive-action")
+        row.append(cancel)
+        row.append(ok)
+        box.append(row)
+        win.set_child(box)
+        cancel.connect("clicked", lambda *_: win.close())
+
+        def go(*_):
+            win.close()
+            self.mgr.uninstall(cmd)
+            self.app.notify(f"{name} wird deinstalliert")
+        ok.connect("clicked", go)
+        win.present()
 
     def ask_token(self, cmd):
         """Privates Repo: GitHub-Token (nur Lesezugriff auf Inhalte) abfragen, speichern, Installation nochmal starten."""
