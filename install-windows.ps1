@@ -25,6 +25,17 @@ function Native([scriptblock]$sb) {
     $ErrorActionPreference = 'Continue'
     try { & $sb } finally { $ErrorActionPreference = $old }
 }
+# Schriften sind vom Betriebssystem eingeblendet (memory-mapped), solange eine Suite-App läuft: Überschreiben scheitert
+# dann mit „Datei mit geöffnetem Bereich“. Nur kopieren, was sich unterscheidet; Gesperrtes ist schon aktuell genug.
+function Copy-Fonts($from, $to) {
+    New-Item -ItemType Directory -Force $to | Out-Null
+    foreach ($f in Get-ChildItem "$from\*" -File) {
+        $dst = Join-Path $to $f.Name
+        if ((Test-Path $dst) -and ((Get-FileHash $dst).Hash -eq (Get-FileHash $f.FullName).Hash)) { continue }
+        try { Copy-Item $f.FullName $dst -Force -ErrorAction Stop }
+        catch { Warn "Schrift $($f.Name) ist in Benutzung und bleibt unverändert (App schließen, um sie zu erneuern)." }
+    }
+}
 function Ask($q)  { if ($Update) { return $false }; $a = Read-Host "$q [J/n]"; return -not ($a -match '^[nN]') }
 
 # ------------------------------------------------------------------ welche App?
@@ -45,8 +56,7 @@ if (Test-Path "$Src\app\scourge.py") {
     $Copy = {
         Copy-Item "$Src\app\calendar\*" $App.Dir -Recurse -Force
         Copy-Item "$Src\app\tui.py", "$Src\app\glass.py", "$Src\app\changelog.py", "$Src\app\swipe.py" "$Share\rice-apps" -Force
-        New-Item -ItemType Directory -Force "$Share\rice-apps\fonts" | Out-Null
-        Copy-Item "$Src\app\fonts\*" "$Share\rice-apps\fonts" -Force
+        Copy-Fonts "$Src\app\fonts" "$Share\rice-apps\fonts"
         Copy-Item "$Src\datist.ico" $App.Dir -Force
     }
 } elseif (Test-Path "$Src\app\music\musicd.py") {
@@ -60,8 +70,7 @@ if (Test-Path "$Src\app\scourge.py") {
     $Copy = {
         Copy-Item "$Src\app\music\*" $App.Dir -Recurse -Force
         Copy-Item "$Src\app\*.py" "$Share\rice-apps" -Force
-        New-Item -ItemType Directory -Force "$Share\rice-apps\fonts" | Out-Null
-        Copy-Item "$Src\app\fonts\*" "$Share\rice-apps\fonts" -Force
+        Copy-Fonts "$Src\app\fonts" "$Share\rice-apps\fonts"
         Copy-Item "$Src\musicalist.ico" $App.Dir -Force
     }
 } else {
