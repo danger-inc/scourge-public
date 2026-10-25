@@ -1,5 +1,9 @@
 # scourge – Änderungen
 
+## 2.11.2 (2026-10-25)
+- **Apps-Leiste: Rechtsklick auf eine App** – „dateipfad öffnen“ (Programmordner im Dateimanager) und
+  „deinstallieren“ (mit Rückfrage; Programm in den Papierkorb, eigene Daten bleiben).
+
 ## 2.11.1 (2026-10-25)
 - **Windows**: Speichern brach bei Zeichen wie „☑“ mit einem Zeichensatz-Fehler ab; Textdateien sind dort jetzt UTF-8.
 - **Windows**: Der Glas-Schalter funktioniert dort wieder (nur die Unterlage, die das Einfrieren auslöste, bleibt aus).
