@@ -7,6 +7,14 @@ param([switch]$Uninstall, [switch]$Update)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'          # Fortschrittsbalken bremst Downloads in PowerShell 5 stark
 $Src = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Fehler sichtbar machen: das Konsolenfenster des Update-Knopfs schloss sich sonst sofort wieder.
+trap {
+    Write-Host ''
+    Write-Host "FEHLER: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
+    if ($Update) { Read-Host 'Enter schliesst das Fenster' | Out-Null }
+    exit 1
+}
 
 function Say($t)  { Write-Host $t -ForegroundColor Cyan }
 function Warn($t) { Write-Host $t -ForegroundColor Yellow }
@@ -129,7 +137,11 @@ if ($App.Keep) {
     New-Item -ItemType Directory -Force $KeepDir | Out-Null
     foreach ($k in $App.Keep) { if (Test-Path "$($App.Dir)\$k") { Copy-Item "$($App.Dir)\$k" $KeepDir -Recurse -Force } }
 }
-if (Test-Path $App.Dir) { Remove-Item -Recurse -Force $App.Dir }
+# Nicht den Ordner selbst löschen: Ist die App gerade offen (Update-Knopf), hält Windows ihn als Arbeitsordner
+# fest und Remove-Item scheiterte. Inhalt leeren, was nicht gesperrt ist, der Rest wird überschrieben.
+if (Test-Path $App.Dir) {
+    Get-ChildItem $App.Dir -Force | ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+}
 New-Item -ItemType Directory -Force $App.Dir | Out-Null
 & $Copy
 if ($App.Keep) {
