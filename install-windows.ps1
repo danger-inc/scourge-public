@@ -18,6 +18,13 @@ trap {
 
 function Say($t)  { Write-Host $t -ForegroundColor Cyan }
 function Warn($t) { Write-Host $t -ForegroundColor Yellow }
+# Programme schreiben Warnungen nach stderr (pacman „ist aktuell“, pip …). Unter 'Stop' und mit umgeleiteter Ausgabe
+# (Update-Knopf schreibt ein Log mit) würde jede solche Zeile den Lauf abbrechen – nur der Exit-Code zählt.
+function Native([scriptblock]$sb) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $sb } finally { $ErrorActionPreference = $old }
+}
 function Ask($q)  { if ($Update) { return $false }; $a = Read-Host "$q [J/n]"; return -not ($a -match '^[nN]') }
 
 # ------------------------------------------------------------------ welche App?
@@ -91,7 +98,7 @@ $Msys = Find-Msys
 if (-not $Msys) {
     Say 'MSYS2 wird installiert (liefert GTK 4 und Python für Windows, einmalig ~1 GB) ...'
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id MSYS2.MSYS2 -e --silent --accept-source-agreements --accept-package-agreements | Out-Host
+        Native { winget install --id MSYS2.MSYS2 -e --silent --accept-source-agreements --accept-package-agreements | Out-Host }
         $Msys = Find-Msys
     }
     if (-not $Msys) {
@@ -99,7 +106,7 @@ if (-not $Msys) {
         $exe = Join-Path $env:TEMP 'msys2-x86_64-latest.exe'
         Invoke-WebRequest 'https://github.com/msys2/msys2-installer/releases/latest/download/msys2-x86_64-latest.exe' `
             -OutFile $exe -UseBasicParsing
-        & $exe in --confirm-command --accept-messages --root C:/msys64 | Out-Host
+        Native { & $exe in --confirm-command --accept-messages --root C:/msys64 | Out-Host }
         $Msys = Find-Msys
     }
     if (-not $Msys) {
@@ -110,7 +117,7 @@ Say "MSYS2: $Msys"
 $env:MSYSTEM = 'UCRT64'
 $env:CHERE_INVOKING = '1'
 function Msys($cmd) {
-    & "$Msys\usr\bin\bash.exe" -lc $cmd | Out-Host
+    Native { & "$Msys\usr\bin\bash.exe" -lc $cmd 2>&1 | Out-Host }
     return $LASTEXITCODE
 }
 
@@ -150,7 +157,7 @@ if ($App.Keep) {
 }
 if ($App.Pip) {
     Say 'Python-Pakete (pip) ...'
-    & $Py -m pip install --upgrade --target (Join-Path $App.Dir 'pylibs') $App.Pip | Out-Host
+    Native { & $Py -m pip install --upgrade --target (Join-Path $App.Dir 'pylibs') $App.Pip 2>&1 | Out-Host }
     if ($LASTEXITCODE -ne 0) { Warn 'pip meldete Fehler – ytmusicapi/yt-dlp fehlen evtl.; Skript erneut starten.' }
 }
 
@@ -208,7 +215,7 @@ try { & "$env:SystemRoot\System32\ie4uinit.exe" -show 2>$null | Out-Null } catch
 
 # ------------------------------------------------------------------ Selbsttest
 Say 'Prüfe ...'
-& $Py -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('  GTK %d.%d: ok' % (Gtk.get_major_version(), Gtk.get_minor_version()))" | Out-Host
+Native { & $Py -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('  GTK %d.%d: ok' % (Gtk.get_major_version(), Gtk.get_minor_version()))" 2>&1 | Out-Host }
 if ($LASTEXITCODE -ne 0) { Warn '  GTK/PyGObject fehlt – Skript bitte erneut starten.' }
 
 Say "Fertig! $($App.Name) steht jetzt im Startmenü."
