@@ -133,6 +133,15 @@ def _git_auth():
             ok = False
         if ok:
             return ["-c", "credential.helper=", "-c", f"credential.helper=!{gh} auth git-credential"]
+    try:                                # gespeicherter Token (Knopf „GitHub-Token eingeben“) statt gh
+        import base64
+        import changelog
+        tok = changelog._token()
+        if tok:
+            b = base64.b64encode(f"x-access-token:{tok}".encode()).decode()
+            return ["-c", f"http.extraheader=Authorization: Basic {b}"]
+    except Exception:  # noqa: BLE001
+        pass
     return []
 
 
@@ -183,7 +192,7 @@ def fetch_repo(key, log, step):
             os.replace(tmp, dest)
             return dest
         shutil.rmtree(tmp, ignore_errors=True)
-    raise RuntimeError("kein zugriff aufs repo" + ("" if auth else " (privat? → „gh auth login“)"))
+    raise RuntimeError("kein zugriff aufs repo" + ("" if auth else " (privat? → GitHub-Token eingeben)"))
 
 
 # ---------------- alte Namen ----------------
@@ -299,7 +308,7 @@ def install(key, step):
             src = fetch_repo(key, log, step)
         except RuntimeError as e:
             log.write(f"FEHLER: {e}\n")
-            return False, str(e), None
+            return False, str(e), "token" if str(e).startswith("kein zugriff") else None
         had = cleanup_before(key, log)
         step("installiert …")
         rc = _run(["bash", "./install.sh", "--update"], log, cwd=src, timeout=1800, env=install_env())

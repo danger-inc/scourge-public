@@ -1,5 +1,9 @@
 # scourge – Änderungen
 
+## 2.11.3 (2026-10-25)
+- **Private Apps ohne `gh` installieren**: Bei „kein zugriff aufs repo“ fragt der Knopf jetzt nach einem GitHub-Token
+  (Lesezugriff), und das Installieren/Aktualisieren nutzt den gespeicherten Token (vorher ging nur `gh auth login`).
+
 ## 2.11.2 (2026-10-25)
 - **Apps-Leiste: Rechtsklick auf eine App** – „dateipfad öffnen“ (Programmordner im Dateimanager) und
   „deinstallieren“ (mit Rückfrage; Programm in den Papierkorb, eigene Daten bleiben).
