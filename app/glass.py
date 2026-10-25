@@ -253,8 +253,8 @@ import math, time, weakref
 from gi.repository import Gdk
 
 CARET_WIDTH = 2.0          # Breite des Balkens in Pixeln
-CARET_FAST = 0.045         # Zeitkonstante (s) der vorauseilenden Ecken
-CARET_SLOW = 0.14          # … der nachziehenden Ecken (je größer der Abstand, desto dicker der Streifen)
+CARET_FAST = 0.03         # Zeitkonstante (s) der vorauseilenden Ecken
+CARET_SLOW = 0.10          # … der nachziehenden Ecken (je größer der Abstand, desto dicker der Streifen)
 CARET_IDLE = 0.6           # Ruhe (s) bis zum Blinken
 CARET_BLINK = 0.53         # Halbperiode des Blinkens (s)
 CARET_CSS = """
@@ -330,7 +330,32 @@ class CaretTrail(Gtk.DrawingArea):
             self._poll_id = 0
         self._release()
 
+    def _watch(self, w):
+        """Cursorbewegung des Felds sofort melden (statt bis zu 40 ms auf den nächsten Takt zu warten)."""
+        self._unwatch()
+        src = w if isinstance(w, Gtk.Text) else (w.get_buffer() if isinstance(w, Gtk.TextView) else None)
+        if src is None:
+            return
+        kick = lambda *_: GLib.idle_add(self._kick)
+        self._watched = (src, [src.connect("notify::cursor-position", kick), src.connect("changed", kick)])
+
+    def _unwatch(self):
+        cur = getattr(self, "_watched", None)
+        self._watched = None
+        if cur:
+            for i in cur[1]:
+                try:
+                    cur[0].disconnect(i)
+                except TypeError:
+                    pass
+
+    def _kick(self):
+        if self._poll_id:
+            self._poll()
+        return False
+
     def _release(self):
+        self._unwatch()
         w = self._widget() if self._widget else None
         if w is not None:
             w.remove_css_class("ist-caret")
@@ -355,6 +380,7 @@ class CaretTrail(Gtk.DrawingArea):
                 old.remove_css_class("ist-caret")
             w.add_css_class("ist-caret")
             self._widget = weakref.ref(w)
+            self._watch(w)
             self._cur = self._tgt = None        # anderes Feld: kein Streifen quer über das Fenster, sondern neu erscheinen
         r = _caret_rect(w)
         host = r[0] if r else w
