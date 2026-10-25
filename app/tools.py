@@ -59,9 +59,7 @@ class ToolPage(Gtk.ScrolledWindow):
         return c
 
     def entry(self, placeholder, cb, width=28, password=False):
-        e = Gtk.PasswordEntry(show_peek_icon=True) if password else Gtk.Entry(placeholder_text=placeholder, width_chars=width)
-        if password:
-            e.set_property("placeholder-text", placeholder)
+        e = ch.password_entry(placeholder) if password else Gtk.Entry(placeholder_text=placeholder, width_chars=width)
         e.add_css_class("pb")
         e.set_hexpand(True)
         e.connect("activate", lambda *_: cb())

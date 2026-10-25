@@ -1773,8 +1773,8 @@ class Scourge(Gtk.Application):
                     self.ver_btn.remove_css_class("off")
                     self.ver_btn.add_css_class("news")
                     self.ver_btn.set_label(f"󰋚 v{drawer.version()}")
-                    GLib.timeout_add(700, lambda: (self.notify(f"Neu in scourge v{drawer.version()} – changelog "
-                                                               "oben rechts"), False)[-1])
+                    GLib.timeout_add(700, lambda: (self.notify(f"neu in v{drawer.version()} – klick oben rechts auf "
+                                                               f"„v{drawer.version()}“ für den changelog"), False)[-1])
             except Exception as e:
                 print("changelog:", e, file=sys.stderr)
         self.check_update()

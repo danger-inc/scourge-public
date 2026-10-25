@@ -137,7 +137,7 @@ class PdfTab(Gtk.Box):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=14, margin_bottom=14,
                       margin_start=14, margin_end=14)
         box.append(Gtk.Label(label=os.path.basename(path) + " ist passwortgeschützt.", xalign=0, wrap=True))
-        ent = Gtk.PasswordEntry(show_peek_icon=True)
+        ent = ch.password_entry()
         box.append(ent)
         ok = ch.button("öffnen")
         box.append(ok)

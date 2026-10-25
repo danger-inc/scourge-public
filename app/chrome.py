@@ -43,6 +43,7 @@ button.tbtn.danger:hover { background-color: @tertiary; color: @background; }
 button.tclose { padding: 1px 6px; border-radius: 4px; color: @foreground; border: 1px solid transparent; }
 button.tclose:hover { background-color: @tertiary; color: @background; }
 button.tflat { padding: 0 4px; border-radius: 4px; color: @primary; }
+button.tflat label { font-size: 13px; font-weight: bold; }
 button.tflat:hover, button.tflat:focus-visible { background-color: alpha(@primary, 0.18); }
 button.tflat.off { color: alpha(@foreground, 0.55); }
 button.tflat.news { color: @primary; border: 1px solid alpha(@primary, 0.55); }
@@ -92,6 +93,19 @@ def tab(key, icon, name, tooltip=None):
     b.set_child(hbox(label(SUP[key] if key is not None else "", "key"), label(icon, "ticon"), b.name_lbl,
                      spacing=3))
     return b
+
+
+def password_entry(placeholder="", activate=None):
+    """Passwortfeld im Suite-Look: * statt großer weißer Punkte, Auge rechts zeigt den Text kurz."""
+    e = Gtk.Entry(placeholder_text=placeholder, visibility=False, hexpand=True)
+    e.set_invisible_char("*")
+    e.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+    e.set_icon_from_icon_name(Gtk.EntryIconPosition.SECONDARY, "view-reveal-symbolic")
+    e.set_icon_tooltip_text(Gtk.EntryIconPosition.SECONDARY, "Passwort zeigen / verbergen")
+    e.connect("icon-press", lambda w, _pos: w.set_visibility(not w.get_visibility()))
+    if activate:
+        e.connect("activate", lambda *_: activate())
+    return e
 
 
 def button(text, tooltip=None, action=None, callback=None, danger=False):
