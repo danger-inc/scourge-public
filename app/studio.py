@@ -509,6 +509,7 @@ class Panel(Gtk.Box):
             v.set_label(fmt.format(x))
             cb(x)
         s.connect("value-changed", changed)
+        ch.reset_on_dblclick(n, s, val)
         box.append(head); box.append(s)
         parent.append(box)
         return box, s

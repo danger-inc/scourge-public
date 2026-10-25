@@ -83,6 +83,7 @@ def persist_lua(key, value, quoted=False):
 
 
 SECTIONS = {
+    "devices": ("Bildschirm, Ton & Funk", "Helligkeit, Lautstärke, Mikrofon, Ausgabegerät, WLAN und Bluetooth."),
     "display": ("Bildschirm", "Helligkeit des Displays."),
     "audio": ("Ton", "Lautstärke, Mikrofon und Ausgabegerät."),
     "input": ("Eingabe", "Maus-Empfindlichkeit, Touchpad und Tastaturlayout."),
@@ -143,6 +144,7 @@ class SystemSettings(ToolPage):
 
     def build(self):
         builders = {
+            "devices": [self.display_card, self.audio_card, self.radio_card],
             "display": [self.display_card],
             "audio": [self.audio_card],
             "input": [self.mouse_card, self.keyboard_card],
@@ -175,6 +177,8 @@ class SystemSettings(ToolPage):
         s.add_css_class("pb")
         s.set_value(val)
         s.connect("value-changed", lambda sc: (vlab.set_label(fmt.format(sc.get_value()) + unit), cb(sc.get_value())))
+        import chrome
+        chrome.reset_on_dblclick(n, s, val)
         box.append(head)
         box.append(s)
         parent.append(box)

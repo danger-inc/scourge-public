@@ -289,6 +289,8 @@ class CompressPage(tools.ToolPage):
         s.add_css_class("pb")
         s.set_value(val)
         s.connect("value-changed", lambda s: (v.set_label(str(int(s.get_value()))), cb(s.get_value())))
+        import chrome
+        chrome.reset_on_dblclick(n, s, val)
         box.append(head); box.append(s)
         parent.append(box)
         return box, s

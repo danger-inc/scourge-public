@@ -49,13 +49,24 @@ import formats  # noqa: E402
 from viewer import VIEWER_CSS, PdfView  # noqa: E402
 
 APP_ID = "de.invincible.Scourge"
-PAGE_TITLES = {"editor": "Meme-Editor"}
+PAGE_TITLES = {"editor": "Meme-Editor", "player": "Öffnen"}
 VIEW_PAGES = ("main",)                 # Seiten, die die geöffnete Datei zeigen (außer dem Editor)
 FILE_PAGES = VIEW_PAGES + ("editor",)
 CONFIG = os.path.expanduser("~/.config/scourge")
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
 LOGO_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "logo")
 ICON_DIR = os.path.expanduser("~/.local/share/icons/hicolor")
+
+
+def open_in_pdf_editor(path):
+    """PDF im schlanken Editor scourge-pdf öffnen (eigener Prozess, startet sofort)."""
+    import subprocess
+    here = os.path.dirname(os.path.realpath(__file__))
+    if os.name == "nt":
+        cmd = [sys.executable.replace("python.exe", "pythonw.exe"), os.path.join(here, "scourge_pdf.py"), path]
+        subprocess.Popen(cmd)
+    else:
+        subprocess.Popen(["bash", os.path.join(here, "scourge-pdf.sh"), path], start_new_session=True)
 
 
 def install_logo():
@@ -675,7 +686,8 @@ class Tab(Gtk.Box):
         try:                # Zwei Finger nach rechts / Maustaste „zurück“ = eine Ebene zurück (wie filist)
             import swipe
             self.swipe = swipe.SwipeBack(self.stack, self.can_back, self.go_back, self._swipe_blocked,
-                                         where=self.swipe_where, target=self.swipe_target)
+                                         where=self.swipe_where, target=self.swipe_target,
+                                         goto=self.swipe_goto)
             self.append(self.swipe.widget)
         except Exception:
             self.swipe = None
@@ -700,13 +712,18 @@ class Tab(Gtk.Box):
                                        hhomogeneous=False, interpolate_size=False)
         self.preview_stack.add_named(self.picture, "pic")
         self.preview_stack.add_named(tscroll, "text")
-        self.pdf_view = PdfView(editable=True, notify=self.notify, on_saved=self.on_pdf_saved)
+        self.pdf_view = PdfView(editable=False, notify=self.notify, on_saved=self.on_pdf_saved)   # Bearbeiten: scourge-pdf
         self.preview_stack.add_named(self.pdf_view, "pdf")
         self.info_btn = Gtk.ToggleButton(label="󰋽", active=True, focus_on_click=False,
                                          tooltip_text="Infospalte ein/aus – mehr Platz fürs PDF")
         self.info_btn.add_css_class("pb"); self.info_btn.add_css_class("small")
         self.info_btn.connect("toggled", lambda b: self.info_scroll.set_visible(b.get_active()))
         self.pdf_view.add_to_bar(self.info_btn)
+        edit_btn = Gtk.Button(label="󰏫 in scourge-pdf bearbeiten", focus_on_click=False,
+                              tooltip_text="Anmerkungen, Text, Markieren: im schlanken PDF-Editor öffnen")
+        edit_btn.add_css_class("pb"); edit_btn.add_css_class("small")
+        edit_btn.connect("clicked", lambda *_: self.source and open_in_pdf_editor(self.source))
+        self.pdf_view.add_to_bar(edit_btn)
         # Arbeitsfläche: PDF + Werkzeuge füllen das ganze Fenster (Kopf-/Statuszeile, Tab-Leiste, Infospalte weg)
         self.focused = False
         self.focus_btn = Gtk.ToggleButton(label="󰊓", focus_on_click=False,
@@ -715,8 +732,7 @@ class Tab(Gtk.Box):
         self.focus_btn.connect("toggled", lambda b: self.set_focus_mode(b.get_active()))
         self.pdf_view.add_to_bar(self.focus_btn)
         esc = Gtk.EventControllerKey()
-        esc.connect("key-pressed", lambda _c, kv, _code, _m: self.focused and kv == Gdk.KEY_Escape
-                    and (self.set_focus_mode(False), True)[1])
+        esc.connect("key-pressed", self._tab_key)
         self.add_controller(esc)
         self.page_bar = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER, visible=False)
         self.prev_btn = Gtk.Button(label="󰅁", tooltip_text="Vorherige Seite (Bild ↑)")
@@ -727,7 +743,9 @@ class Tab(Gtk.Box):
             b.add_css_class("pb"); b.add_css_class("small")
             b.connect("clicked", lambda *_, d=d: self.turn_page(d))
         self.page_bar.append(self.prev_btn); self.page_bar.append(self.page_label); self.page_bar.append(self.next_btn)
-        self.audio_controls = Gtk.MediaControls(visible=False, hexpand=True)
+        from player import MediaBar
+        self.audio_controls = MediaBar(loop=True)
+        self.audio_controls.set_visible(False)
         pv = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=14, margin_bottom=14,
                      margin_start=14, margin_end=14)
         self.pv = pv
@@ -792,8 +810,11 @@ class Tab(Gtk.Box):
         if getattr(self, "focused", False) and not self.can_focus_pdf():
             self.set_focus_mode(False)
         page = self.page()
+        pl = self.pages.get("player")
+        if pl is not None and pl.full and page != "player":      # Vollbild des Players beim Verlassen beenden
+            pl.set_full(False)
         has_file = self.image is not None or getattr(self, "doc", None) is not None
-        self.bar.set_visible(page != "home")  # auf der Startseite übernimmt die große Überschrift
+        self.bar.set_visible(not getattr(self, "focused", False))  # feste Kopfhöhe: Start rutscht beim Seitenwechsel nicht
         for b in self.file_btns:
             b.set_visible(page in FILE_PAGES or (page == "home" and b is self.file_btns[0]))
         if page == "home":
@@ -801,7 +822,7 @@ class Tab(Gtk.Box):
         elif page in FILE_PAGES and has_file:
             name = os.path.basename(self.source) if self.source else "Aus der Zwischenablage"
             self.set_title(name, PAGE_TITLES.get(page, self.subtitle_text()))
-        elif page.startswith("tool-") or page in ("record", "cutter"):
+        elif page.startswith("tool-") or page in ("record", "cutter", "player"):
             pg = self.stack.get_visible_child()
             self.set_title(getattr(pg, "title", "Werkzeug"), getattr(pg, "subtitle", ""))
         self.app_main.sync_actions(self)
@@ -884,6 +905,24 @@ class Tab(Gtk.Box):
             key = ("home", None)
         return key, self._swipe_title(*key)
 
+    def swipe_goto(self, key):
+        """2fz vorwärts: zu einer zuvor verlassenen Seite zurückkehren (Schlüssel aus swipe_where)."""
+        page, src = key
+        if page == "home":
+            self.go_home()
+        elif page == "main":
+            if src and os.path.exists(src):
+                self.load_path(src)
+            else:
+                return False
+        elif page in self.pages:
+            self.stop_media()
+            self.stack.set_visible_child_name(page)
+            self.on_page_changed()
+        else:
+            return False
+        return True
+
     @staticmethod
     def _swipe_blocked(w):
         """Widgets, die waagerechtes Wischen selbst brauchen (Zeitleiste, Zeichenflächen mit Scroll-Steuerung)."""
@@ -900,13 +939,25 @@ class Tab(Gtk.Box):
             pass
         return False
 
-    def go_home(self):
+    def _cutter_guard(self, proceed, leaving=True):
+        """Schnitt mit ungesicherten Änderungen: erst fragen (zwischenspeichern / verwerfen / bleiben)."""
+        pg = self.pages.get("cutter")
+        if pg is not None and pg.needs_ask() and (not leaving or self.page() == "cutter"):
+            pg.ask_leave(proceed)
+            return True
+        return False
+
+    def go_home(self, _go=False):
+        if not _go and self._cutter_guard(lambda: self.go_home(_go=True)):
+            return
         self.stop_media()
         self.stack.set_visible_child_name("home")
         self.home.refresh()
 
-    def open_page(self, key, factory):
+    def open_page(self, key, factory, _go=False):
         """Seite (Aufnahme, Schnitt, Werkzeug) bei Bedarf bauen und zeigen."""
+        if not _go and key != "cutter" and self._cutter_guard(lambda: self.open_page(key, factory, _go=True)):
+            return None
         self.stop_media()
         if key not in self.pages:
             self.pages[key] = factory()
@@ -919,8 +970,10 @@ class Tab(Gtk.Box):
         from recorder import RecorderPage
         return self.open_page("record", lambda: RecorderPage(self))
 
-    def open_cutter(self, path):
+    def open_cutter(self, path, _go=False):
         from cutter import CutterPage
+        if not _go and self._cutter_guard(lambda: self.open_cutter(path, _go=True), leaving=False):
+            return self.pages.get("cutter")
         pg = self.open_page("cutter", lambda: CutterPage(self))
         pg.load(path)
         self.app_main.add_recent(path)
@@ -1143,6 +1196,40 @@ class Tab(Gtk.Box):
         except OSError as e:
             return self.fail(f"Datei konnte nicht gelesen werden: {e.strerror}")
         self.load_bytes(data, path)
+
+    def _tab_key(self, _c, kv, _code, _m):
+        """Esc beendet die PDF-Arbeitsfläche; Leertaste startet/stoppt Musik in der Dateiprüfung."""
+        if self.focused and kv == Gdk.KEY_Escape and self.page() != "player":
+            self.set_focus_mode(False)
+            return True
+        if kv == Gdk.KEY_f and (_m & Gdk.ModifierType.CONTROL_MASK) and self.page() == "home":
+            self.home.focus_search()
+            return True
+        if kv == Gdk.KEY_space and self.audio_controls.get_visible() and self.page() == "main":
+            focus = self.app_main.win.get_focus()
+            if not isinstance(focus, (Gtk.Text, Gtk.TextView, Gtk.Editable, Gtk.Button)):
+                self.audio_controls.toggle()
+                return True
+        return False
+
+    def on_open_player(self, *_):
+        """Kachel „Öffnen“: Datei wählen und gleich ansehen/abspielen (PDFs gehen an scourge-pdf)."""
+        from player import PlayerPage
+        pg = self.open_page("player", lambda: PlayerPage(self))
+        pg.ask()
+
+    def open_media(self, path):
+        import player
+        k = player.kind(path)
+        if k == "pdf":
+            open_in_pdf_editor(path)
+            return
+        if k is None:
+            return self.load_path(path)
+        from player import PlayerPage
+        pg = self.open_page("player", lambda: PlayerPage(self))
+        self.app_main.add_recent(path)
+        pg.load(path)
 
     def can_focus_pdf(self):
         return self.page() == "main" and self.preview_stack.get_visible_child_name() == "pdf"
@@ -1538,6 +1625,12 @@ class Tab(Gtk.Box):
 
     # ---------- Aktionen ----------
     def on_open(self, *_):
+        """Strg+O / Knopf „öffnen“: gleiche Funktion wie die Kachel „Öffnen“ (Bild/Video/Musik/PDF direkt, alles
+        andere landet in der Dateiprüfung)."""
+        return self.on_open_player()
+
+    def on_open_check(self, *_):
+        """Datei wählen und durchleuchten (Kachel „Datei prüfen“)."""
         everything = Gtk.FileFilter(name="Alle Dateien")
         everything.add_pattern("*")
         media = Gtk.FileFilter(name="Bilder und Videos")
@@ -1685,6 +1778,7 @@ class Scourge(Gtk.Application):
             except Exception as e:
                 print("changelog:", e, file=sys.stderr)
         self.check_update()
+        osint_file, self._osint_file = getattr(self, "_osint_file", None), None
 
     def check_update(self):
         """Neuere Version auf GitHub? → Versionsknopf „󰚰 v2.7.0 → v2.8.0“ + einmal Hinweis (Cache 6 h)."""
@@ -1694,14 +1788,12 @@ class Scourge(Gtk.Application):
             version = drawer.version()
 
             def has_update(latest):
-                self.ver_btn.remove_css_class("off")
-                self.ver_btn.add_css_class("news")
-                self.ver_btn.set_label(f"󰚰 v{version} → v{latest}")
-                self.ver_btn.set_tooltip_text(changelog.update_text(latest) + " · klick: changelog")
                 if getattr(self, "_update_told", None) != latest:
                     self._update_told = latest
                     GLib.timeout_add(1000, lambda: (self.notify(changelog.update_text(latest)), False)[-1])
             getattr(changelog, "check_update", lambda *a: None)("scourge", version, has_update)
+            if getattr(self, "upd_btn", None):
+                self.upd_btn.recheck()
         except Exception as e:
             print("update-check:", e, file=sys.stderr)
 
@@ -1740,12 +1832,28 @@ class Scourge(Gtk.Application):
         if os.name == "nt":            # Windows: kein D-Bus → versteckte Instanz wäre nicht wiederzufinden
             self.really_quit()
             return True
-        for tab in self.tabs():
-            tab.stop_media()
-        self.close_drawer()
-        self.keep_running()
-        self.win.set_visible(False)
+        import settings_menu
+        if not settings_menu.background_mode():
+            self.really_quit()
+            return True
+
+        def hide():
+            self.close_drawer()
+            self.keep_running()
+            self.win.set_visible(False)
+        self.close_all_tabs(hide)           # Schließen = alle Tabs zu (Super+C, ✕, Strg+Q)
         return True
+
+    def close_all_tabs(self, then=None):
+        """Alle Tabs schließen (ungespeicherte PDFs: speichern/nachfragen), danach ein frischer Start-Tab."""
+        def go():
+            for tab in list(self.tabs()):
+                self.close_tab(tab, force=True)
+            if self.notebook.get_n_pages() == 0:
+                self.new_tab()
+            if then:
+                then()
+        self.confirm_unsaved(self.tabs(), go)
 
     def really_quit(self):
         def go():
@@ -1793,15 +1901,18 @@ class Scourge(Gtk.Application):
         dlg.choose(self.win, None, done)
 
     def do_open(self, files, n, hint):
+        paths = [f.get_path() for f in files if f.get_path()]
+        for p in [p for p in paths if p.lower().endswith(".pdf")]:     # PDFs gehören in den schlanken Editor
+            open_in_pdf_editor(p)
+        paths = [p for p in paths if not p.lower().endswith(".pdf")]
+        if not paths:
+            return
         self.do_activate()
-        for f in files:
-            if f.get_path():
-                tab = self.current()
-                if tab.page() != "home":
-                    tab = self.new_tab()
-                tab.load_path(f.get_path())
-                if f.get_path().lower().endswith(".pdf"):
-                    GLib.idle_add(tab.open_fullscreen)
+        for p in paths:
+            tab = self.current()
+            if tab.page() != "home":
+                tab = self.new_tab()
+            tab.load_path(p)
 
     def _on_colors_changed(self, _mon, f, other, _ev):
         names = {x.get_basename() for x in (f, other) if x is not None}
@@ -1846,6 +1957,7 @@ class Scourge(Gtk.Application):
         from recorder import RECORDER_CSS
         from studio import STUDIO_CSS
         from compress import COMPRESS_CSS
+        from player import PLAYER_CSS
         css = FALLBACK_COLORS
         try:
             self._css_src = open(MATUGEN_CSS).read()
@@ -1859,7 +1971,7 @@ class Scourge(Gtk.Application):
             from swipe import CSS as SWIPE_CSS
         except ImportError:
             SWIPE_CSS = ""
-        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + COMPRESS_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
+        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + COMPRESS_CSS + PLAYER_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
         for tab in self.tabs():
             if tab.image is not None:
                 tab.swatch.queue_draw()
@@ -1931,13 +2043,22 @@ class Scourge(Gtk.Application):
         self.ver_btn.add_css_class("off")
         self.ver_btn.connect("clicked", lambda *_: self.show_changelog())
         right.append(self.ver_btn)
+        import changelog
+        self.upd_btn = changelog.update_button("scourge", drawer.version(), notify=self.notify,
+                                               restart=lambda: self.drawer.restart_self())
+        right.append(self.upd_btn)
         help_btn = Gtk.MenuButton(child=Gtk.Label(label="󰋗"), tooltip_text="Welche Dateien kann Scourge prüfen?",
                                   valign=Gtk.Align.CENTER)
         help_btn.add_css_class("tbtn")
         help_btn.set_popover(formats_popover())
         self.help_btn = help_btn
         right.append(help_btn)
-        right.append(glass.GlassToggle(self.win))
+        self.glass_toggle = glass.GlassToggle(self.win)       # hält Fenster + Datei synchron; Schalter im Zahnrad
+        import settings_menu
+        self.settings_btn = settings_menu.build(self, self.glass_toggle, version=drawer.version(),
+                                                changelog_cb=self.show_changelog,
+                                                update_cb=lambda: self.upd_btn.emit("clicked"))
+        right.append(self.settings_btn)
         close = Gtk.Button(label="✕", tooltip_text="Schließen (Strg+Q) – Scourge wartet im Hintergrund und ist beim nächsten Aufruf sofort da", action_name="win.quit", valign=Gtk.Align.CENTER,
                            focus_on_click=False)
         close.add_css_class("tclose")
@@ -2024,6 +2145,9 @@ class Scourge(Gtk.Application):
 
     def close_tab(self, tab=None, force=False):
         tab = tab or self.current()
+        cp = tab.pages.get("cutter")
+        if not force and cp is not None and cp.needs_ask():
+            return cp.ask_leave(lambda: self.close_tab(tab, force=True))
         if not force and tab.pdf_view.dirty:
             return self.confirm_unsaved([tab], lambda: self.close_tab(tab, force=True))
         tab.shutdown()
@@ -2108,7 +2232,8 @@ if __name__ == "__main__":
         code = app.run([sys.argv[0]])
         sys.stdout.flush(); sys.stderr.flush()
         os._exit(code)
-    code = Scourge().run(sys.argv)
+    app = Scourge()
+    code = app.run(sys.argv)
     sys.stdout.flush(); sys.stderr.flush()
     # GStreamer-Threads können beim normalen Python-Abbau noch Rückrufe auslösen und abstürzen:
     # deshalb direkt beenden (alles ist zu diesem Zeitpunkt gespeichert)

@@ -70,6 +70,11 @@ def frame_window(win):
     Größenänderung, aber ohne zusätzliche Titelleiste – verschoben wird über die eigene Kopfzeile."""
     if tiling_desktop():
         win.set_decorated(False)
+    elif os.name == "nt":
+        # Windows: echte Titelleiste (verschieben, Größe ändern, minimieren/maximieren/schließen). Mit der
+        # unsichtbaren Leiste unten ließ sich das Fenster dort nicht anfassen.
+        win.set_decorated(True)
+        win.set_titlebar(None)
     else:
         win.set_decorated(True)
         bar = Gtk.Box(visible=False)      # unsichtbare Titelleiste: nur Rahmen, keine Standard-Leiste

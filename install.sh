@@ -34,15 +34,18 @@ echo
 say "Kopiere Scourge nach $APP_DIR ..."
 mkdir -p "$APP_DIR" "$BIN" "$APPS" "$FONTS" "$ICONS"
 cp -rf "$SRC/app/." "$APP_DIR/"
-chmod +x "$APP_DIR/scourge.py" "$APP_DIR/scourge.sh"
+chmod +x "$APP_DIR/scourge.py" "$APP_DIR/scourge.sh" "$APP_DIR/scourge_pdf.py" "$APP_DIR/scourge-pdf.sh"
 
 # Launcher (Bash: spricht eine laufende Scourge-Instanz direkt per D-Bus an → Fenster sofort da)
 ln -sf "$APP_DIR/scourge.sh" "$BIN/scourge"
+ln -sf "$APP_DIR/scourge-pdf.sh" "$BIN/scourge-pdf"      # schlanker PDF-Editor
 # läuft eine alte Version im Hintergrund, beenden – der nächste Aufruf startet die neue
 timeout 5 "$BIN/scourge" --quit >/dev/null 2>&1 || true
+timeout 5 "$BIN/scourge-pdf" --quit >/dev/null 2>&1 || true
 
 # Desktop-Eintrag + Icons
 sed "s|@EXEC@|$BIN/scourge|g" "$SRC/scourge.desktop.in" | grep -v '^# \[' > "$APPS/scourge.desktop"
+sed "s|@EXEC@|$BIN/scourge-pdf|g" "$SRC/scourge-pdf.desktop.in" > "$APPS/scourge-pdf.desktop"
 cp -f "$APP_DIR/logo/scourge.svg" "$ICONS/scourge.svg"
 cp -f "$APP_DIR/logo/scourge-symbolic.svg" "$ICONS/scourge-symbolic.svg"
 refresh_desktop

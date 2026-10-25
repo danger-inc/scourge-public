@@ -143,6 +143,17 @@ function New-Link($path) {
     $l.Save()
 }
 New-Link "$Programs\$Lnk"
+# scourge-pdf (schlanker PDF-Editor) bekommt einen eigenen Startmenü-Eintrag
+if (Test-Path (Join-Path $App.Dir 'scourge_pdf.py')) {
+    $ws2 = New-Object -ComObject WScript.Shell
+    $l2 = $ws2.CreateShortcut("$Programs\scourge-pdf.lnk")
+    $l2.TargetPath = $PyW
+    $l2.Arguments = '"' + (Join-Path $App.Dir 'scourge_pdf.py') + '"'
+    $l2.WorkingDirectory = $App.Dir
+    $l2.IconLocation = $IconPath + ',0'
+    $l2.Description = 'scourge-pdf'
+    $l2.Save()
+}
 if ((Test-Path "$Desktop\$Lnk") -or (Ask 'Auch eine Verknüpfung auf dem Desktop anlegen?')) { New-Link "$Desktop\$Lnk" }
 # Explorer die Symbole neu einlesen lassen (sonst erst nach Neuanmeldung)
 try { & "$env:SystemRoot\System32\ie4uinit.exe" -show 2>$null | Out-Null } catch { }

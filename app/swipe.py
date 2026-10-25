@@ -16,6 +16,15 @@ CSS = """
 label.swipe-acc { color: @primary; }
 label.swipe-on { color: @on_primary; }
 label.swipe-bg { color: @background; }
+
+/* Rückmeldung für Umschalt-Knöpfe (Ton behalten, Wiederholen …): „an“ muss auch unter dem Mauszeiger sichtbar
+   sein. Sonst sieht „an + Hover“ genauso aus wie „aus + Hover“, und man erkennt den Klick erst nach dem
+   Wegfahren. Gedrückt (:active) färbt sofort. Gilt für alle Apps, die swipe.py laden (alle der Suite). */
+button.toggle:checked:hover, button.pb:checked:hover, button.tbtn:checked:hover {
+    background-image: none; background-color: alpha(@primary, 0.42); color: @foreground; border-color: @primary;
+    box-shadow: inset 0 0 0 1px @primary; }
+button.toggle:active, button.pb:active, button.tbtn:active {
+    background-image: none; background-color: alpha(@primary, 0.62); color: @foreground; border-color: @primary; }
 """
 
 DIST = 150            # so weit (px) wischen, bis es auslöst
@@ -85,7 +94,8 @@ class SwipeBin(Gtk.Widget):
             self.helpers[k] = lb
 
     def do_dispose(self):
-        for w in [self.child] + list(self.helpers.values()):
+        ch, hp = getattr(self, "child", None), getattr(self, "helpers", None) or {}
+        for w in [ch] + list(hp.values()):
             if w is not None and w.get_parent() is self:
                 w.unparent()
         self.child, self.helpers = None, {}
@@ -123,11 +133,17 @@ class SwipeBack:
     waagerechtes Wischen selbst braucht."""
 
     def __init__(self, content, can_back, back, blocked=None, where=None, target=None,
-                 can_fwd=None, fwd=None, fwd_target=None, mouse=True):
+                 can_fwd=None, fwd=None, fwd_target=None, mouse=True, goto=None):
         _install_css()
         self.can_back, self.back, self.blocked = _weak(can_back), _weak(back), _weak(blocked)
         self.where, self.target = _weak(where), _weak(target)
         self.can_fwd, self.fwd, self.fwd_target = _weak(can_fwd), _weak(fwd), _weak(fwd_target)
+        # Automatischer Vorwärts-Verlauf: Wer nur goto(schlüssel) -> bool liefert (Seite per where()-Schlüssel
+        # öffnen), bekommt „vor“ geschenkt: jede Zurück-Geste merkt die verlassene Seite.
+        self.goto = _weak(goto)
+        self.auto_fwd = goto is not None and fwd is None
+        self._fstack = []            # [(schlüssel, titel)] verlassene Seiten, jüngste zuletzt
+        self._quiet = 0.0            # bis dahin zählen Seitenwechsel als Folge unserer Geste
         self.bin = SwipeBin(self, content)
         self.bin.set_overflow(Gtk.Overflow.HIDDEN)
         # .widget bleibt ein Overlay (Apps hängen eigene Leisten daran, z. B. notist „zuletzt“) –
@@ -164,6 +180,8 @@ class SwipeBack:
         """Wird bei jedem gezeichneten Bild gerufen: Seitenwechsel → letztes Bild der alten Seite merken."""
         key = self._key()
         lk, ln = self._last
+        if lk is not None and lk != key and self._fstack and GLib.get_monotonic_time() > self._quiet:
+            self._fstack.clear()                    # Nutzer ist woanders hin navigiert → kein „vor“ mehr
         if lk is not None and lk != key and ln is not None:
             self.snaps[lk] = ln
             self.snaps.move_to_end(lk)
@@ -186,6 +204,9 @@ class SwipeBack:
     def _info(self, d):
         fn = self.target if d < 0 else self.fwd_target
         key, title = None, None
+        if d > 0 and self.auto_fwd and self._fstack:
+            key, title = self._fstack[-1]
+            fn = None
         if fn is not None:
             try:
                 r = fn()
@@ -201,6 +222,8 @@ class SwipeBack:
         try:
             if d < 0:
                 return bool(self.can_back())
+            if self.auto_fwd:
+                return bool(self._fstack)
             return bool(self.can_fwd and self.fwd and self.can_fwd())
         except Exception:
             return False
@@ -361,7 +384,26 @@ class SwipeBack:
         st = self.st
         old = self._last[1]
         d = st["d"]
-        (self.back if d < 0 else self.fwd)()
+        if self.auto_fwd:
+            self._quiet = GLib.get_monotonic_time() + 2_000_000
+            if d < 0:
+                try:
+                    cur = tuple(self.where())
+                except Exception:
+                    cur = None
+                self.back()
+                if cur is not None and (not self._fstack or self._fstack[-1][0] != cur[0]):
+                    self._fstack.append(cur)
+                    del self._fstack[:-KEEP]
+            else:
+                key, _t = self._fstack.pop()
+                try:
+                    if self.goto(key) is False:
+                        self._fstack.clear()
+                except Exception:
+                    self._fstack.clear()
+        else:
+            (self.back if d < 0 else self.fwd)()
         if not animate or self.bin.get_width() <= 0:
             self.st = None
             self.bin.queue_draw()

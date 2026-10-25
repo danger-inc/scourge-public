@@ -11,6 +11,13 @@ running() { gdbus call --session --dest org.freedesktop.DBus --object-path /org/
     --method org.freedesktop.DBus.NameHasOwner "$APP" 2>/dev/null | grep -q true; }
 
 case "${1:-}" in
+    --osint-file)         # Datei im vollen Scourge mit den OSINT-Werkzeugen prüfen (Knopf in scourge-pdf)
+        f="$(realpath -m -- "${2:?datei}")"
+        if running; then
+            gdbus call --session --timeout 3 --dest "$APP" --object-path "$OBJ" --method org.gtk.Actions.Activate \
+                osint "[<('file', '$f')>]" '{}' >/dev/null 2>&1 && exit 0
+        fi
+        exec python3 "$MAIN" --osint-file "$f" ;;
     --daemon)
         running && exit 0
         setsid -f python3 "$MAIN" --daemon >"${XDG_RUNTIME_DIR:-/tmp}/scourge.log" 2>&1 </dev/null
@@ -19,6 +26,17 @@ case "${1:-}" in
         running && gdbus call --session --dest "$APP" --object-path "$OBJ" \
             --method org.gtk.Actions.Activate quit '[]' '{}' >/dev/null 2>&1
         exit 0 ;;
+esac
+
+# PDFs gehören in den schlanken Editor (scourge-pdf): sofort dorthin, nur der Rest läuft hier weiter
+case "${1:-}" in -*) ;; *)
+    pdfs=(); rest=()
+    for a in "$@"; do case "${a,,}" in *.pdf) pdfs+=("$a") ;; *) rest+=("$a") ;; esac; done
+    if [ ${#pdfs[@]} -gt 0 ]; then
+        "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/scourge-pdf.sh" "${pdfs[@]}"
+        [ ${#rest[@]} -eq 0 ] && exit 0
+        set -- "${rest[@]}"
+    fi ;;
 esac
 
 running || exec python3 "$MAIN" "$@"

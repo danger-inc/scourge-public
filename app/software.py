@@ -798,6 +798,38 @@ VISUALS_EXTRA = [
 ]
 
 
+# Paketnamen je Paketverwalter (None = gibt es dort nicht in den Paketquellen)
+VISUAL_PKGS = {
+    "cbonsai": {"pacman": "cbonsai", "apt": "cbonsai", "dnf": "cbonsai", "zypper": "cbonsai"},
+    "pipes.sh": {"pacman": "pipes.sh", "paru": "pipes.sh"},
+    "cava": {"pacman": "cava", "apt": "cava", "dnf": "cava", "zypper": "cava"},
+    "btop": {"pacman": "btop", "apt": "btop", "dnf": "btop", "zypper": "btop"},
+    "fastfetch": {"pacman": "fastfetch", "apt": "fastfetch", "dnf": "fastfetch", "zypper": "fastfetch"},
+    "cmatrix": {"pacman": "cmatrix", "apt": "cmatrix", "dnf": "cmatrix", "zypper": "cmatrix"},
+    "asciiquarium": {"apt": "asciiquarium", "dnf": "asciiquarium", "paru": "asciiquarium"},
+    "tty-clock": {"apt": "tty-clock", "dnf": "tty-clock", "paru": "tty-clock-git"},
+    "sl": {"pacman": "sl", "apt": "sl", "dnf": "sl", "zypper": "sl"},
+}
+# Terminal-Optionen, die das Fenster gleich im Vollbild öffnen
+TERM_FULLSCREEN = {"kitty": ["--start-as=fullscreen"], "foot": ["--fullscreen"], "xterm": ["-fullscreen"],
+                   "alacritty": ["-o", 'window.startup_mode="Fullscreen"'], "gnome-terminal": ["--full-screen"],
+                   "konsole": ["--fullscreen"]}
+
+
+def install_command(pkg):
+    """Befehl, der `pkg` (Paket-Schlüssel aus VISUALS_EXTRA) für diesen Rechner installiert – oder None."""
+    names = VISUAL_PKGS.get(pkg, {})
+    for mgr, tmpl in (("pacman", "sudo pacman -S --needed {}"), ("apt", "sudo apt install -y {}"),
+                      ("dnf", "sudo dnf install -y {}"), ("zypper", "sudo zypper install -y {}")):
+        if shutil.which(mgr if mgr != "apt" else "apt-get") and mgr in names:
+            return tmpl.format(names[mgr])
+    if "paru" in names:                       # nur im AUR: ein AUR-Helfer muss da sein
+        for helper in ("paru", "yay"):
+            if shutil.which(helper):
+                return f"{helper} -S --needed {names['paru']}"
+    return None
+
+
 def terminal():
     m = re.search(r'^\s*local\s+terminal\s*=\s*"([^"]+)"', hypr_text(), re.M)
     for t in ([m.group(1)] if m else []) + ["kitty", "foot", "alacritty", "wezterm", "xterm"]:
@@ -827,27 +859,19 @@ class TerminalVisuals(ToolPage):
     def build(self):
         self.term = terminal()
         own, _exe = istfx_effects()
-        c = self.card("istfx · in deinen farben")
-        t = Gtk.Label(label="Eigene Effekte von scourge, immer in den Farben des aktuellen Hintergrunds (Super+W). "
-                            "Im Terminal einfach den Befehl tippen – „istfx“ allein zeigt die Liste. Beenden mit q.",
-                      xalign=0, wrap=True)
-        t.add_css_class("note")
-        c.append(t)
-        for cmd, desc in own:
-            self.cmd_row(c, cmd, desc, True)
+        if own:                                   # istfx liegt nicht bei jeder Installation bei
+            c = self.card("istfx · in deinen farben")
+            t = Gtk.Label(label="Eigene Effekte von scourge, immer in den Farben des aktuellen Hintergrunds (Super+W). "
+                                "Im Terminal einfach den Befehl tippen – „istfx“ allein zeigt die Liste. Beenden mit q.",
+                          xalign=0, wrap=True)
+            t.add_css_class("note")
+            c.append(t)
+            for cmd, desc in own:
+                self.cmd_row(c, cmd, desc, True)
         c2 = self.card("weitere programme")
-        missing = []
         for cmd, desc, pkg in VISUALS_EXTRA:
             ok = bool(shutil.which(cmd.split()[0]))
-            if not ok:
-                missing.append(pkg)
             self.cmd_row(c2, cmd, desc, ok, pkg)
-        if missing:
-            hint = Gtk.Label(label="Fehlende installieren: sudo pacman -S " + " ".join(
-                p for p in missing if p != "pipes.sh") + "  (asciiquarium/tty-clock ggf. aus dem AUR)",
-                             xalign=0, wrap=True, selectable=True)
-            hint.add_css_class("note")
-            c2.append(hint)
         if not self.term:
             w = Gtk.Label(label="Kein Terminal gefunden – „starten“ geht dann nicht, kopieren schon.", xalign=0)
             w.add_css_class("note")
@@ -855,19 +879,56 @@ class TerminalVisuals(ToolPage):
 
     def cmd_row(self, parent, cmd, desc, ok, pkg=None):
         row = Gtk.Box(spacing=10)
-        k = Gtk.Label(label=cmd, xalign=0, width_chars=22, selectable=True)
+        k = Gtk.Label(label=cmd, xalign=0, width_chars=22)       # nicht auswählbar: sonst ist der erste Eintrag immer markiert
         k.add_css_class("val")
         k.add_css_class("mono")
         d = Gtk.Label(label=desc if ok else f"{desc} – nicht installiert ({pkg})", xalign=0, hexpand=True, wrap=True)
         d.add_css_class("note" if not ok else "key")
         row.append(k)
         row.append(d)
-        start = self.button("󰐊 starten", lambda: self.start(cmd), f"In {self.term or 'einem Terminal'} starten",
-                            small=True)
-        start.set_sensitive(ok and bool(self.term))
-        row.append(start)
+        if ok or not pkg:
+            start = self.button("󰐊 starten", lambda: self.start(cmd), f"In {self.term or 'einem Terminal'} starten",
+                                small=True)
+            start.set_sensitive(ok and bool(self.term))
+            row.append(start)
+        else:                                                    # fehlt: gleich hier installieren
+            inst = install_command(pkg)
+            b = self.button("󰇚 installieren", lambda: self.install(pkg, inst),
+                            inst or "Dafür gibt es hier kein Paket in den Paketquellen", small=True)
+            b.set_sensitive(bool(inst) and bool(self.term))
+            row.append(b)
         row.append(self.button("󰆏", lambda: self.copy(cmd), "Befehl kopieren", small=True))
         parent.append(row)
+
+    def install(self, pkg, inst):
+        """Installation im Terminal (braucht sudo) – danach wird die Liste neu geprüft."""
+        if not (self.term and inst):
+            return
+        term = self.term
+        name = os.path.basename(term.split()[0])
+        inner = f"{inst}; echo; echo '» fertig – Enter schließt'; read _"
+        argv = shlex.split(term) + (["start", "--"] if name == "wezterm" else ["-e"]) + ["sh", "-c", inner]
+        try:
+            p = subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            return self.tab.notify(f"Terminal startet nicht: {e}")
+        self.tab.notify(f"{pkg}: Installation läuft im Terminal …")
+
+        def wait():
+            p.wait()
+            GLib.idle_add(self.refresh)
+        threading.Thread(target=wait, daemon=True).start()
+
+    def refresh(self):
+        kids = []
+        c = self.box.get_first_child()
+        while c is not None:
+            kids.append(c)
+            c = c.get_next_sibling()
+        for k in kids[1 if self.privacy else 0:]:
+            self.box.remove(k)
+        self.build()
+        return False
 
     def start(self, cmd):
         term = self.term
@@ -892,7 +953,7 @@ class TerminalVisuals(ToolPage):
         if name == "wezterm":
             argv = shlex.split(term) + ["start", "--", "sh", "-c", inner]
         else:
-            argv = shlex.split(term) + ["-e", "sh", "-c", inner]
+            argv = shlex.split(term) + TERM_FULLSCREEN.get(name, []) + ["-e", "sh", "-c", inner]   # immer im Vollbild
         try:
             subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=env, cwd=os.path.expanduser("~"))

@@ -2,8 +2,8 @@
 # Entfernt Scourge wieder (installierte Systempakete bleiben).
 set -euo pipefail
 rm -rf "$HOME/.local/share/scourge"
-rm -f  "$HOME/.local/bin/scourge"
-rm -f  "$HOME/.local/share/applications/scourge.desktop"
+rm -f  "$HOME/.local/bin/scourge" "$HOME/.local/bin/scourge-pdf"
+rm -f  "$HOME/.local/share/applications/scourge.desktop" "$HOME/.local/share/applications/scourge-pdf.desktop"
 rm -f  "$HOME/.local/share/icons/hicolor/scalable/apps/scourge.svg" \
        "$HOME/.local/share/icons/hicolor/scalable/apps/scourge-symbolic.svg"
 command -v update-desktop-database >/dev/null 2>&1 && \

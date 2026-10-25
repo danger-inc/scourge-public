@@ -26,7 +26,19 @@ VIEWER_CSS = """
 .pdf-tools button.pcolor:hover { border-color: alpha(@primary, 0.55); }
 .pdf-tools button.pcolor.active { border-color: @primary; }
 .pdf-tools .dirty { color: @tertiary; font-size: 12px; }
-popover.pdf-pop > contents { padding: 8px; }
+popover.pdf-pop > contents { padding: 2px; }
+.pdf-pop-box { margin: 6px; }
+/* kleinere Eingaben wie in filist: flache Zeile, 12 px Schrift */
+.pb-window .pdf-tools spinbutton, .pb-window popover.pdf-pop spinbutton { min-height: 22px; font-size: 12px; }
+.pb-window .pdf-tools spinbutton text, .pb-window popover.pdf-pop spinbutton text { min-width: 16px; padding: 0 4px; font-size: 12px; }
+.pb-window .pdf-tools spinbutton > button, .pb-window popover.pdf-pop spinbutton > button { min-width: 16px; min-height: 0; padding: 0; }
+.pb-window .pdf-tools dropdown > button, .pb-window popover.pdf-pop dropdown > button { min-height: 22px; padding: 0 6px; font-size: 12px; }
+.pb-window .pdf-tools dropdown > button label, .pb-window popover.pdf-pop dropdown > button label { font-size: 12px; }
+.pb-window .pdf-tools .tool-name { font-size: 12px; }
+.pdf-color-preview { border: 1px solid alpha(@primary, 0.55); border-radius: 4px; min-width: 28px; min-height: 22px; }
+.pdf-color-row .key { min-width: 12px; }
+.pb-window .pdf-color-row scale.pb { min-height: 14px; margin: 0; }
+.pdf-pop entry { min-width: 70px; }
 popover.pdf-pop textview, popover.pdf-pop textview text { background-color: alpha(@background, 0.45); color: @foreground; }
 popover.pdf-pop textview { border: 1px solid alpha(@primary, 0.45); border-radius: 4px; padding: 4px 6px; }
 .hits { font-size: 11px; color: alpha(@foreground, 0.6); }
@@ -35,9 +47,9 @@ popover.pdf-pop textview { border: 1px solid alpha(@primary, 0.45); border-radiu
 GAP = 14
 
 # (Schlüssel, Symbol, Name, Taste)
-TOOLS = (("select", "󰗧", "auswählen", "v"), ("highlight", "󰸱", "markieren", "h"),
-         ("underline", "󰊇", "unterstreichen", "u"), ("strike", "󰊀", "durchstreichen", "d"),
-         ("text", "󰊄", "text", "t"), ("ink", "󰏪", "stift", "p"), ("rect", "󰹟", "rahmen", "r"),
+TOOLS = (("text", "󰊄", "text schreiben", "t"), ("select", "󰇀", "text auswählen", "v"),
+         ("highlight", "󰸱", "markieren", "h"), ("underline", "󰊇", "unterstreichen", "u"),
+         ("strike", "󰊀", "durchstreichen", "d"), ("ink", "󰏪", "stift", "p"), ("rect", "󰹟", "rahmen", "r"),
          ("note", "󰆉", "notiz", "n"), ("erase", "󰇾", "radierer", "e"))
 TOOL_TIPS = {"select": "Text auswählen, kopieren, Links folgen", "highlight": "Text mit dem Textmarker markieren",
              "underline": "Text unterstreichen", "strike": "Text durchstreichen",
@@ -45,6 +57,7 @@ TOOL_TIPS = {"select": "Text auswählen, kopieren, Links folgen", "highlight": "
              "ink": "Freihand zeichnen", "rect": "Rahmen aufziehen", "note": "Notiz anheften",
              "erase": "Anmerkung anklicken, um sie zu entfernen"}
 MARKUP = ("highlight", "underline", "strike")
+CUSTOM_COLORS = os.path.expanduser("~/.config/scourge/pdf-colors.json")
 COLORS = (("gelb", "#ffd400"), ("grün", "#62d26f"), ("blau", "#3d8bff"), ("rot", "#e5322d"),
           ("pink", "#ff5fc4"), ("schwarz", "#1b1b1b"))
 FONTS = (("Sans", "Sans"), ("Serif", "Serif"), ("Mono", "Monospace"))
@@ -348,8 +361,12 @@ class PdfView(Gtk.Box):
         bar = Gtk.Box(spacing=6)
         bar.add_css_class("pdf-bar")
         self.prev = self._btn("󰅁", "Vorherige Seite (Bild ↑)", lambda: self.goto(self.current_page() - 1))
-        self.page_lbl = Gtk.Label(label="")
+        self.page_lbl = Gtk.Label(label="", tooltip_text="Klick: zu einer Seite springen (Strg+G)")
         self.page_lbl.add_css_class("key")
+        self.page_lbl.set_cursor_from_name("pointer")
+        jump = Gtk.GestureClick()
+        jump.connect("released", lambda *_: self.ask_page())
+        self.page_lbl.add_controller(jump)
         self.next = self._btn("󰅂", "Nächste Seite (Bild ↓)", lambda: self.goto(self.current_page() + 1))
         for w in (self.prev, self.page_lbl, self.next):
             bar.append(w)
@@ -392,6 +409,13 @@ class PdfView(Gtk.Box):
         zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
         zoom.connect("scroll", self.on_scroll)
         self.scroll.add_controller(zoom)
+        # Zwei Finger auseinander/zusammen (Touchpad/Touchscreen) = Zoom
+        pinch = Gtk.GestureZoom()
+        pinch.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        pinch.connect("begin", lambda *_: setattr(self, "_pinch0", self.zoom))
+        pinch.connect("scale-changed", self._on_pinch)
+        self.scroll.add_controller(pinch)
+        self._pinch0, self._pinch_id = 1.0, None
         self._build_popovers()
 
     @staticmethod
@@ -446,6 +470,14 @@ class PdfView(Gtk.Box):
             b.connect("clicked", lambda *_, c=hexcol: self.set_color(c))
             self.color_btns[hexcol] = b
             self.color_box.append(b)
+        for hexcol in self._load_custom():
+            self._add_custom(hexcol)
+        add = Gtk.Button(label="󰐕", tooltip_text="Eigene Farbe hinzufügen", focus_on_click=False,
+                         valign=Gtk.Align.CENTER)
+        add.add_css_class("pcolor")
+        add.connect("clicked", lambda *_: self._pick_color())
+        self.color_add = add
+        self.color_box.append(add)
         row.append(self.color_box)
         self.size_spin = Gtk.SpinButton.new_with_range(1, 72, 1)
         self.size_spin.set_width_chars(2)
@@ -481,6 +513,147 @@ class PdfView(Gtk.Box):
         self.tool_btns["select"].set_active(True)
         self._sync_tools()
         return flow
+
+    @staticmethod
+    def _load_custom():
+        try:
+            import json
+            with open(CUSTOM_COLORS) as f:
+                return [c for c in json.load(f) if isinstance(c, str) and len(c) == 7][:12]
+        except (OSError, ValueError):
+            return []
+
+    def _save_custom(self):
+        import json
+        cols = [c for c, b in self.color_btns.items() if getattr(b, "custom", False)]
+        try:
+            os.makedirs(os.path.dirname(CUSTOM_COLORS), exist_ok=True)
+            with open(CUSTOM_COLORS, "w") as f:
+                json.dump(cols, f)
+        except OSError:
+            pass
+
+    def _add_custom(self, hexcol):
+        if hexcol in self.color_btns:
+            return self.color_btns[hexcol]
+        b = Gtk.Button(child=_swatch(hexcol), tooltip_text=f"{hexcol} – Rechtsklick entfernt die Farbe",
+                       focus_on_click=False, valign=Gtk.Align.CENTER)
+        b.add_css_class("pcolor")
+        b.custom = True
+        b.connect("clicked", lambda *_, c=hexcol: self.set_color(c))
+        rc = Gtk.GestureClick(button=3)
+        rc.connect("pressed", lambda *_, c=hexcol: self._remove_custom(c))
+        b.add_controller(rc)
+        self.color_btns[hexcol] = b
+        add = getattr(self, "color_add", None)
+        if add is None:
+            self.color_box.append(b)
+        else:                                      # vor dem „+“ einsortieren
+            self.color_box.insert_child_after(b, add.get_prev_sibling())
+        return b
+
+    def _remove_custom(self, hexcol):
+        b = self.color_btns.pop(hexcol, None)
+        if b is not None:
+            self.color_box.remove(b)
+            self._save_custom()
+            self._sync_tools()
+
+    PRESETS = ("#ff8a00", "#a855f7", "#14b8a6", "#8b5a2b", "#9ca3af", "#ffffff", "#7c3aed", "#0ea5e9",
+               "#84cc16", "#f43f5e", "#fde68a", "#111111")
+
+    def _pick_color(self):
+        """Eigene Farbe im -ist-Look: Vorschau, Hex-Feld, drei flache Regler, ein paar Vorschläge."""
+        pop = Gtk.Popover(has_arrow=True, autohide=True)
+        pop.add_css_class("pdf-pop")
+        pop.add_css_class("formats")
+        pop.set_parent(self.color_add)
+        cur = _rgb(self.colors.get(self.tool, "#e5322d"))
+        rgb = [round(c * 255) for c in cur]
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.add_css_class("pdf-pop-box")
+        title = Gtk.Label(label="eigene farbe", xalign=0)
+        title.add_css_class("card-title")
+        box.append(title)
+        top = Gtk.Box(spacing=8)
+        prev = Gtk.DrawingArea(content_width=28, content_height=22)
+        prev.add_css_class("pdf-color-preview")
+        hexent = Gtk.Entry(max_width_chars=8, width_chars=8, placeholder_text="#rrggbb")
+        hexent.add_css_class("pb")
+        top.append(prev)
+        top.append(hexent)
+        box.append(top)
+        state = {"busy": False}
+
+        def hexcol():
+            return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+        def draw(_a, cr, w, h):
+            r, g, b = (c / 255 for c in rgb)
+            cr.set_source_rgb(r, g, b)
+            cr.rectangle(0, 0, w, h)
+            cr.fill()
+        prev.set_draw_func(draw)
+        scales = []
+
+        def sync(from_hex=False):
+            state["busy"] = True
+            for sc, v in zip(scales, rgb):
+                sc.set_value(v)
+            if not from_hex:
+                hexent.set_text(hexcol())
+            prev.queue_draw()
+            state["busy"] = False
+        for i, name in enumerate("rgb"):
+            row = Gtk.Box(spacing=8)
+            row.add_css_class("pdf-color-row")
+            lb = Gtk.Label(label=name, xalign=0)
+            lb.add_css_class("key")
+            sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
+            sc.set_draw_value(False)
+            sc.set_hexpand(True)
+            sc.set_size_request(150, -1)
+            sc.add_css_class("pb")
+
+            def moved(sc, i=i):
+                if not state["busy"]:
+                    rgb[i] = int(sc.get_value())
+                    sync()
+            sc.connect("value-changed", moved)
+            scales.append(sc)
+            row.append(lb)
+            row.append(sc)
+            box.append(row)
+
+        def typed(e):
+            t = e.get_text().strip().lstrip("#")
+            if len(t) == 6 and all(c in "0123456789abcdefABCDEF" for c in t):
+                rgb[:] = [int(t[j:j + 2], 16) for j in (0, 2, 4)]
+                sync(from_hex=True)
+        hexent.connect("changed", typed)
+        presets = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=6, column_spacing=2,
+                              row_spacing=2, homogeneous=False)
+        for hc in self.PRESETS:
+            b = Gtk.Button(child=_swatch(hc), focus_on_click=False, tooltip_text=hc)
+            b.add_css_class("pcolor")
+            b.connect("clicked", lambda *_, hc=hc: (rgb.__setitem__(slice(None), [round(c * 255) for c in _rgb(hc)]), sync()))
+            presets.append(b)
+        box.append(presets)
+
+        def add(*_):
+            hc = hexcol()
+            if self._add_custom(hc) is not None:
+                self._save_custom()
+            self.set_color(hc)
+            pop.popdown()
+        ok = self._btn("󰐕 hinzufügen", "Farbe merken und benutzen", add)
+        hexent.connect("activate", add)
+        box.append(ok)
+        pop.set_child(box)
+        pop.connect("closed", lambda p: GLib.idle_add(p.unparent))
+        sync()
+        pop.popup()
+        hexent.grab_focus()
 
     def set_tool(self, key):
         if key != self.tool:
@@ -551,16 +724,18 @@ class PdfView(Gtk.Box):
     def _build_popovers(self):
         self.sel_pop = Gtk.Popover(has_arrow=True, autohide=True)
         self.sel_pop.add_css_class("pdf-pop")
+        self.sel_pop.add_css_class("formats")
         self.sel_pop.set_parent(self)
         box = Gtk.Box(spacing=4)
         box.append(self._btn("󰆏 kopieren", "Auswahl kopieren (Strg+C)", lambda: (self.copy_selection(), self.sel_pop.popdown())))
         if self.editable:
-            for kind, icon, name, _k in TOOLS[1:4]:
+            for kind, icon, name, _k in [t for t in TOOLS if t[0] in MARKUP]:
                 box.append(self._btn(icon, name, lambda kind=kind: (self.markup_selection(kind), self.sel_pop.popdown())))
         self.sel_pop.set_child(box)
 
         self.in_pop = Gtk.Popover(has_arrow=True, autohide=True)
         self.in_pop.add_css_class("pdf-pop")
+        self.in_pop.add_css_class("formats")
         self.in_pop.set_parent(self)
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.in_title = Gtk.Label(label="", xalign=0)
@@ -761,6 +936,42 @@ class PdfView(Gtk.Box):
         mid = self.scroll.get_vadjustment().get_value() + self.scroll.get_height() / 3
         offs = self.offsets()
         return max(0, sum(1 for o in offs if o <= mid) - 1)
+
+    def ask_page(self):
+        """Kleines Feld unter der Seitenzahl: Nummer eintippen, Enter springt hin."""
+        if not self.doc:
+            return
+        pop = Gtk.Popover(has_arrow=True, autohide=True)
+        pop.add_css_class("pdf-pop")
+        pop.add_css_class("formats")
+        pop.set_parent(self.page_lbl)
+        n = len(self.sizes)
+        box = Gtk.Box(spacing=8, valign=Gtk.Align.CENTER)
+        box.add_css_class("pdf-pop-box")
+        lbl = Gtk.Label(label="zu seite")
+        lbl.add_css_class("key")
+        ent = Gtk.Entry(text=str(self.current_page() + 1), width_chars=4, max_width_chars=5, xalign=0.5)
+        ent.add_css_class("pb")
+        of = Gtk.Label(label=f"/ {n}")
+        of.add_css_class("key")
+        go_btn = self._btn("󰁔", "Springen (Enter)", lambda: go())
+
+        def go(*_):
+            try:
+                i = int(ent.get_text().strip()) - 1
+            except ValueError:
+                return ent.add_css_class("error")
+            self.goto(max(0, min(i, n - 1)))
+            pop.popdown()
+        ent.connect("activate", go)
+        ent.connect("changed", lambda e: e.remove_css_class("error"))
+        for w in (lbl, ent, of, go_btn):
+            box.append(w)
+        pop.set_child(box)
+        pop.connect("closed", lambda p: GLib.idle_add(p.unparent))
+        pop.popup()
+        ent.grab_focus()
+        ent.select_region(0, -1)
 
     def goto(self, i, render_only=False, y_in_page=0):
         if not self.doc:
@@ -1064,7 +1275,7 @@ class PdfView(Gtk.Box):
             return
         if getattr(self, "_auto_id", None):
             GLib.source_remove(self._auto_id)
-        import formats
+        import netfs as formats
         ms = self.AUTOSAVE_REMOTE_MS if formats.is_remote(self.path) else self.AUTOSAVE_MS
         self._auto_id = GLib.timeout_add(ms, self._autosave)
 
@@ -1111,7 +1322,7 @@ class PdfView(Gtk.Box):
             return False
         tmp = os.path.join(os.path.dirname(target) or ".", f".{os.path.basename(target)}.scourge-tmp")
         try:
-            import formats
+            import netfs as formats
             if formats.is_remote(target):
                 # Netzlaufwerk: lokal schreiben, dann am Stück hochladen (Poppler schreibt in vielen kleinen Stücken)
                 import shutil, tempfile
@@ -1655,6 +1866,8 @@ class PdfView(Gtk.Box):
             self.fit_width()
         elif c and k == "f":
             self.search.grab_focus()
+        elif c and k == "g":
+            self.ask_page()
         elif c and k == "c" and self.sel and not typing:
             self.copy_selection()
         elif self.editable and c and k.lower() == "z" and not typing:
@@ -1676,6 +1889,19 @@ class PdfView(Gtk.Box):
         else:
             return False
         return True
+
+    def _on_pinch(self, g, scale):
+        target = max(0.2, min(self._pinch0 * scale, 6))
+        self._pinch_to = target
+        if self._pinch_id is None:                      # höchstens ~20 Neuberechnungen pro Sekunde
+            self._pinch_id = GLib.timeout_add(50, self._pinch_apply)
+
+    def _pinch_apply(self):
+        self._pinch_id = None
+        if abs(self._pinch_to - self.zoom) > 0.004:
+            self.fit = False
+            self._apply_zoom(self._pinch_to)
+        return False
 
     def on_scroll(self, ctrl, dx, dy):
         if ctrl.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:

@@ -3,6 +3,7 @@
 
 inspect files (metadata/exif), edit pdfs, record screen,
 videos cut (edit videos), build memes, generate gradients & ascii art – a gtk4 app for linux.
+it also installs and updates its sister apps (notist, filist, musicalist, datist …) from the apps bar.
 
 ## install – linux
 
@@ -65,12 +66,36 @@ scourge file.jpg   # open a file directly
 * **background mode:** ✕ or ctrl+q only hides scourge; the next call of `scourge` is instantly there
 (the launcher communicates directly with the running instance via d-bus). exit completely: `scourge --quit`.
 for immediate first start add to autostart, e.g. hyprland: `exec-once = scourge --daemon`.
-* **pdfs** open immediately; analysis runs in the background. in the toolbar: select text &
-copy, highlight, underline, strikethrough, insert text (font, size, color), pen, frame,
-note, eraser, undo (ctrl+z) and save (ctrl+s, ctrl+shift+s = new file). the annotations
-are real pdf annotations and remain editable in other pdf programs.
-* **apps bar:** mouse to the left window edge or click on "scourge" top left – starter for
-notist, filist, musicalist and datist (if installed).
+* **pdfs** open in **scourge-pdf**, a slim pdf editor of its own (starts instantly, saves automatically, waits in the
+background like scourge: `scourge-pdf --daemon`). in the toolbar: write text (font, size, color), select text &
+copy, highlight, underline, strikethrough, pen, frame, note, eraser, undo (ctrl+z) and save (ctrl+s, ctrl+shift+s = new
+file). pinch to zoom, click the page number to jump to a page, add your own highlight colors with "+". the annotations
+are real pdf annotations and remain editable in other pdf programs. scourge itself shows only the analysis of a pdf.
+* **open:** the first tile (and ctrl+o) opens images in full screen, plays videos and music (timeline, loop, space
+to play/pause) and sends pdfs to scourge-pdf. everything else goes to the file check.
+* **apps bar:** mouse to the left window edge or click on "scourge" top left – starter for the other apps (see below).
+
+## the other apps – download them from scourge
+
+scourge is part of a small family of apps with the same look: **notist** (notes, words, latex), **filist** (files),
+**musicalist** (youtube music), **datist** (calendar), **wallist** (wallpapers), **mailist** (gmail & imap),
+**sharist** (quick share with your phone) and **linguist** (translator).
+
+you don't need to clone anything for them – scourge installs them itself:
+
+1. move the mouse to the **left window edge** (or click "scourge" top left) to open the apps bar.
+2. next to every app that isn't installed there is a small **download button**. click it – scourge fetches the
+   app from github and runs its installer, the button turns into a spinner and then the app can be started from the bar.
+3. the row **"updates installieren"** at the bottom updates all apps at once; **"nach updates suchen"** checks github.
+   every app also has its own small update button next to its version number.
+
+the public versions of the apps are downloaded – no account needed.
+
+if a system package needs your password (`sudo`) the button shows a warning sign – click it and the installation
+continues in a terminal. old installs under former names (wallpapaer, filewise, kalender, textwise, musicminus) are
+replaced and keep their data.
+on **windows** the bar installs and updates **notist** and **datist** (the others are linux only); it downloads the
+repo and runs `install-windows.ps1` in its own console window.
 
 ## what runs where
 

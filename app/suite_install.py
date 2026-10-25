@@ -23,7 +23,11 @@ LOG_DIR = H("~/.cache/scourge/install")
 BIN = H("~/.local/bin")
 APPS_DIR = H("~/.local/share/applications")
 ICON_DIR = H("~/.local/share/icons/hicolor/scalable/apps")
-SUPPORTED = os.name != "nt" and bool(shutil.which("bash"))
+WINDOWS = os.name == "nt"
+SUPPORTED = WINDOWS or bool(shutil.which("bash"))
+# Unter Windows gibt es (noch) Installer für diese Apps – install-windows.ps1 im Repo
+WIN_APPS = ("scourge", "notist", "datist")
+WIN_LINK = {"scourge": "Scourge", "notist": "notist", "datist": "datist", "musicalist": "musicalist"}
 
 # Repo-Namen: der neue zuerst, dann die öffentliche Ausgabe, dann frühere Namen (GitHub leitet um).
 OWNERS = ("danger-inc", "invincible-nix")
@@ -68,6 +72,10 @@ def _vkey(v):
 
 
 def launcher(cmd):
+    if WINDOWS:                       # Startmenü-Verknüpfung, die install-windows.ps1 anlegt
+        lnk = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs",
+                           WIN_LINK.get(cmd, cmd) + ".lnk")
+        return lnk if os.path.exists(lnk) else None
     p = os.path.join(BIN, cmd)
     return p if os.access(p, os.X_OK) else shutil.which(cmd)
 
@@ -275,6 +283,13 @@ def install(key, step):
     Gibt (ok, text, hinweis) zurück; hinweis = 'packages' wenn Systempakete fehlen könnten."""
     os.makedirs(LOG_DIR, exist_ok=True)
     before = installed_version(key)
+    if WINDOWS:
+        import changelog
+        ok, text = changelog.windows_install(key, update=state(key) == "ok", step=step)
+        after = installed_version(key)
+        if ok and not after:
+            ok, text = False, "installiert, aber keine Version gefunden"
+        return ok, (f"v{before} → v{after}" if ok and before and before != after else f"v{after} installiert") if ok else text, None
     with open(log_path(key), "w") as log:
         log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {key}  (vorher: {before or state(key)})\n")
         try:
@@ -453,6 +468,8 @@ class Manager:
         if not SUPPORTED:
             return
         for k in keys:
+            if WINDOWS and k not in WIN_APPS:
+                continue
             if k not in self.queue and not self.info[k].get("busy"):
                 self.queue.append(k)
                 self.info[k].update(busy=True, msg="wartet …", status=None, hint=None)

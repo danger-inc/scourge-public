@@ -1,5 +1,47 @@
 # scourge – Änderungen
 
+## 2.11.0 (2026-10-25)
+- **scourge-pdf – der schlanke PDF-Editor**: PDFs öffnen jetzt in einem eigenen, sofort startenden Programm
+  (`scourge-pdf`, eigener Prozess und Menü-Eintrag, wartet im Hintergrund). Aus filist, per `scourge datei.pdf` und
+  über die Kachel „Öffnen“ landen PDFs dort. Es speichert automatisch, Schließen (Super+C) sichert und schließt alle
+  Tabs. Im vollen Scourge zeigt ein PDF nur noch die Analyse mit Leseansicht und dem Knopf „in scourge-pdf
+  bearbeiten“.
+- **PDF-Editor im Suite-Look**: durchsichtiger Hintergrund (Glas), Schrift und Tabs wie in Scourge, Popups („zu
+  Seite springen“, „eigene Farbe“ mit Reglern und Vorschlägen), kleinere Schrift-/Größenfelder; die erste Kachel der
+  Werkzeuge ist jetzt „text schreiben“, danach „text auswählen“.
+- **PDF-Editor**: Zoom mit zwei Fingern (Pinch), Zu-Seite-springen (Klick auf die Seitenzahl oder Strg+G), eigene
+  Markierfarben (Knopf „+“, Rechtsklick entfernt eine Farbe) und ein eindeutigeres Symbol für „auswählen“ (Pfeil
+  statt Textcursor, keine Verwechslung mit „Text“).
+- **Öffnen**: Neue erste Kachel unter misc, dieselbe Funktion wie der Knopf „öffnen“ oben und Strg+O (alles andere, z. B. Office,
+  geht in die Dateiprüfung; die gibt es auch als Kachel „Datei prüfen“). Bilder gehen im Vollbild auf (← → blättert durch den Ordner), Videos und
+  Musik spielen mit Zeitleiste (Zehntelsekunden, Zeit unter dem Mauszeiger), Wiederholen (standardmäßig an),
+  Lautstärke und Leertaste; Esc/Doppelklick beendet das Vollbild. Die Musik-Anzeige in der Dateiprüfung hat dieselbe
+  Leiste – der Name steht nicht mehr über dem Play-Knopf.
+- **Video schneiden mit mehreren Spuren**: Videos und Musik liegen als Stücke auf Spuren (wie in DaVinci Resolve).
+  Werkzeug „Verschieben“ (V) zieht Stücke – auch auf andere Spuren, um sie zu überlagern (Musik unter Gameplay) –
+  und kürzt an den Kanten; „Schneiden“ (C) teilt per Klick. Magnetisch (ein/aus) rastet an Kanten und am Abspielkopf
+  ein, beim Entfernen schließt sich die Lücke (ein/aus). Die Vorschau spielt alle Spuren zugleich, der Export mischt
+  den Ton und legt das Bild der obersten Spur über Schwarz. Zeitleistenhöhe am Griff ziehen (jetzt flüssig),
+  Leertaste, Wiederholen. Beim Verlassen fragt Scourge, ob der Schnitt zwischengespeichert werden soll (Karte
+  „Zwischenstand“ beim nächsten Öffnen).
+- **Einstellungen oben rechts (Zahnrad)** öffnen ein eigenes Fenster im Suite-Look: Glas-Design, im Hintergrund
+  weiterlaufen, Autostart, alle Tabs schließen, komplett beenden, Version und Update-Suche. **Schließen (Super+C, ✕,
+  Strg+Q) schließt jetzt alle Tabs** (ungespeicherte PDFs werden vorher gesichert).
+- **Suche auf der Startseite** (einfach lostippen oder Strg+F): findet Werkzeuge, Einstellungen und Autostart. Die
+  Startseite rutscht beim Öffnen einer Kachel nicht mehr nach unten, die 2-Finger-Animation passt dadurch exakt –
+  und der Hyprland-Kachel-Absturz (Fehler beim Aufräumen der Wisch-Ansicht) ist behoben.
+- **2 Finger auch vorwärts**: Nach dem Zurück-Wischen bringt die Gegenrichtung zur verlassenen Seite zurück.
+- **System & Terminal-Visuals**: Bildschirm, Ton und Funk sind eine Kachel. Hyprland-Kachel, Eingabe, Cursor und
+  Waybar erscheinen nur, wo Hyprland eingerichtet ist. Terminal-Visuals: der erste Eintrag ist nicht mehr markiert,
+  fehlende Programme haben einen „installieren“-Knopf (öffnet ein Terminal mit dem passenden Befehl), Visuals
+  starten im Vollbild.
+- **Regler zurücksetzen**: Doppelklick auf den Titel eines Reglers (z. B. bei ASCII, Verlauf, Komprimieren) setzt
+  ihn auf den Ausgangswert. **Umschalt-Knöpfe** („Ton behalten“ …) zeigen den Klick sofort, auch unter dem
+  Mauszeiger.
+- **Update-Knopf**: Neben der Versionsnummer steht „󰑐“ – Klick sucht sofort nach einem Update. Gibt es eine neuere
+  Version, wird daraus „󰚰 update“; ein Klick lädt und installiert sie (Linux und Windows), danach heißt er „󰑓 neu starten“.
+- **Öffentliche Ausgabe**: Die Kachel „Suite-Apps“ entfällt; Standard-Apps, Terminal-Visuals und Hyprland bleiben.
+
 ## 2.10.0 (2026-10-24)
 - **linguist in der Suite**: Der neue Übersetzer steht in der Apps-Leiste, unter „software“ (Installieren, Updates,
   Neustart, Einstellungen), bei den Suite-Icons und in der Veröffentlichen-Liste. Maus in die untere rechte

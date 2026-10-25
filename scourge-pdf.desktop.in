@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=scourge-pdf
+GenericName=PDF-Editor
+Comment=Schlanker PDF-Editor: Text, Markieren, Zeichnen, Notizen – speichert automatisch
+Exec=@EXEC@ %f
+Icon=scourge
+Terminal=false
+Categories=Office;Utility;Viewer;
+Keywords=pdf;editor;anmerkung;markieren;unterstreichen;scourge;
+MimeType=application/pdf;
+StartupWMClass=de.invincible.ScourgePdf

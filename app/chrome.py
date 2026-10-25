@@ -107,6 +107,16 @@ def button(text, tooltip=None, action=None, callback=None, danger=False):
     return b
 
 
+def reset_on_dblclick(label, scale, default=None):
+    """Doppelklick auf den Titel eines Reglers setzt ihn auf den Ausgangswert zurück."""
+    if default is None:
+        default = scale.get_value()
+    label.set_tooltip_text("Doppelklick: zurücksetzen")
+    g = Gtk.GestureClick()
+    g.connect("pressed", lambda _g, n, *_: n == 2 and scale.set_value(default))
+    label.add_controller(g)
+
+
 def hint(key, text):
     return hbox(label(key, "accent"), label(text, "dim"), spacing=5)
 

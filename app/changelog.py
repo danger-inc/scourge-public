@@ -203,9 +203,13 @@ def _load_updates():
         return {}
 
 
-def check_update(key, version, callback):
-    """callback(neuere_version) im GTK-Thread, falls GitHub eine neuere Version als `version` hat."""
+def check_update(key, version, callback, force=False, none=None):
+    """callback(neuere_version) im GTK-Thread, falls GitHub eine neuere Version als `version` hat.
+    force=True fragt GitHub jetzt (ohne den 6-h-Cache); none(grund) kommt, wenn es keine neuere gibt
+    (grund = "aktuell" oder "offline")."""
     if not version or key not in REPOS:
+        if none:
+            none("offline")
         return
     import threading
     import time
@@ -215,8 +219,10 @@ def check_update(key, version, callback):
         if latest and _vkey(latest) > _vkey(version):
             _updates[key] = latest
             GLib.idle_add(lambda: (callback(latest), False)[1])
+        elif none:
+            GLib.idle_add(lambda: (none("aktuell" if latest else "offline"), False)[1])
 
-    if time.time() - cache.get("t", 0) < UPDATE_EVERY:
+    if not force and time.time() - cache.get("t", 0) < UPDATE_EVERY:
         report(cache.get("latest"))
         return
 
@@ -238,7 +244,182 @@ def check_update(key, version, callback):
 
 
 def update_text(latest):
-    return f"v{latest} ist da – aktualisieren: {UPDATE_HINT}"
+    return f"v{latest} ist da – oben neben der Version auf „update“ klicken"
+
+
+# ---------- Update-Knopf ----------
+_installer_mod = None
+
+
+def _installer():
+    """suite_install.py (Linux: holt das Repo und startet install.sh --update). Im Scourge-Prozess das schon geladene
+    Modul nehmen, sonst die nächste Kopie (App-Ordner, rice-apps, scourge)."""
+    global _installer_mod
+    import sys
+    if "suite_install" in sys.modules:
+        return sys.modules["suite_install"]
+    if _installer_mod is None:
+        import importlib.util
+        for d in (os.path.dirname(os.path.realpath(__file__)), os.path.expanduser("~/.local/share/rice-apps"),
+                  os.path.expanduser("~/.local/share/scourge")):
+            path = os.path.join(d, "suite_install.py")
+            if os.path.isfile(path):
+                try:
+                    spec = importlib.util.spec_from_file_location("suite_install_shared", path)
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    _installer_mod = mod
+                    break
+                except Exception:
+                    continue
+        else:
+            _installer_mod = False
+    return _installer_mod or None
+
+
+def windows_install(key, update=True, step=None):
+    """Windows (blockierend, im Thread): Repo-Archiv von GitHub laden, entpacken, install-windows.ps1 in einem eigenen
+    Konsolenfenster ausführen und auf das Ende warten. update=True → ohne Rückfragen (-Update).
+    Gibt (ok, Text) zurück."""
+    import subprocess
+    import tempfile
+    import urllib.request
+    import zipfile
+    step = step or (lambda t: None)
+    try:
+        tmp = tempfile.mkdtemp(prefix="ist-update-")
+        zpath = os.path.join(tmp, "repo.zip")
+        step("lädt …")
+        ok = False
+        for repo in REPOS[key][1]:
+            try:
+                req = urllib.request.Request(f"https://api.github.com/repos/{repo}/zipball",
+                                             headers={"User-Agent": "ist-update"})
+                with urllib.request.urlopen(req, timeout=90) as r, open(zpath, "wb") as f:
+                    f.write(r.read())
+                ok = True
+                break
+            except OSError:
+                continue
+        if not ok:
+            return False, "Download fehlgeschlagen (kein Zugriff aufs Repo)"
+        with zipfile.ZipFile(zpath) as z:
+            z.extractall(tmp)
+        ps1 = next((os.path.join(d, "install-windows.ps1") for d, _s, fs in os.walk(tmp)
+                    if "install-windows.ps1" in fs), None)
+        if not ps1:
+            return False, "Im Download fehlt install-windows.ps1"
+        step("installiert …")
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1] + (["-Update"] if update else [])
+        rc = subprocess.call(cmd, creationflags=0x00000010)      # CREATE_NEW_CONSOLE: Fortschritt im eigenen Fenster
+        return rc == 0, "installiert" if rc == 0 else f"Installation fehlgeschlagen (Code {rc})"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Update fehlgeschlagen: {e}"
+
+
+def _update_windows(key, say):
+    import threading
+
+    def work():
+        ok, text = windows_install(key, True)
+        GLib.idle_add(say, (f"{key}: {text} – App neu starten." if ok else text))
+    threading.Thread(target=work, daemon=True).start()
+
+
+def update_button(key, version, notify=None, restart=None, classes=("tflat", "news")):
+    """Knopf „󰚰 update“ neben der Versionsnummer: unsichtbar, bis GitHub eine neuere Version hat; Klick lädt und
+    installiert sie (Linux: Repo holen + install.sh --update, Windows: install-windows.ps1 -Update). Danach heißt er
+    „󰑓 neu starten“. btn.recheck() fragt erneut (hinter dem 6-h-Cache)."""
+    import subprocess
+    say = notify or (lambda msg: None)
+    btn = Gtk.Button(label="󰑐", valign=Gtk.Align.CENTER, focus_on_click=False,
+                     tooltip_text="Nach einem Update suchen")
+    base = [c for c in classes if c != "news"]
+    for c in base:
+        btn.add_css_class(c)
+    st = {"latest": None, "mode": "idle"}
+
+    def has_update(latest):
+        st["latest"] = latest
+        if st["mode"] == "idle":
+            btn.add_css_class("news")
+            btn.set_label("󰚰 update")
+            btn.set_tooltip_text(f"Update auf v{latest} laden und installieren")
+
+    def none(why):
+        if st["mode"] == "idle":
+            btn.set_sensitive(True)
+            btn.set_label("󰑐")
+            if st.get("asked"):
+                st["asked"] = False
+                say(f"v{version} ist aktuell." if why == "aktuell" else "Update-Suche: kein Netz oder kein Zugriff aufs Repo.")
+
+    def installed(k=None):
+        si = _installer()
+        info = si.manager().info.get(key, {}) if si else {}
+        if k not in (None, key):
+            return
+        if info.get("busy"):
+            st["mode"] = "busy"
+            btn.set_label("󰦖 " + (info.get("msg") or "installiert …")[:22])
+            btn.set_sensitive(False)
+        elif info.get("status") == "ok":
+            st["mode"] = "restart"
+            btn.set_sensitive(True)
+            btn.set_label("󰑓 neu starten")
+            btn.set_tooltip_text(info.get("msg") or "neue Version installiert")
+        elif info.get("status") == "err":
+            st["mode"] = "idle"
+            btn.set_sensitive(True)
+            btn.set_label("󰀦 nochmal versuchen")
+            btn.set_tooltip_text(info.get("msg") or "fehlgeschlagen")
+
+    def clicked(*_):
+        if st["mode"] == "busy":
+            return
+        if st["mode"] == "idle" and not st["latest"]:           # noch nichts bekannt: jetzt nachfragen
+            st["asked"] = True
+            btn.set_label("󰦖")
+            btn.set_sensitive(False)
+            return check_update(key, version, has_update_ask, force=True, none=none)
+        if st["mode"] == "restart":
+            if restart:
+                return restart()
+            si = _installer()
+            cmd = os.path.expanduser("~/.local/bin/" + (si.APPS[key]["cmd"] if si and key in si.APPS else key))
+            subprocess.Popen(["sh", "-c", f"sleep 1; '{cmd}' --quit >/dev/null 2>&1; sleep 1; '{cmd}'"],
+                             start_new_session=True)
+            return
+        if os.name == "nt":
+            btn.set_label("󰦖 lädt …")
+            btn.set_sensitive(False)
+            st["mode"] = "busy"
+
+            def done(msg):
+                say(msg)
+                st["mode"] = "idle"
+                btn.set_sensitive(True)
+                btn.set_label("󰚰 update")
+            return _update_windows(key, done)
+        si = _installer()
+        if si is None or not getattr(si, "SUPPORTED", False):
+            return Gtk.UriLauncher(uri="https://github.com/" + REPOS[key][1][-1]).launch(btn.get_root(), None, None)
+        m = si.manager()
+        if not getattr(btn, "_listening", False):
+            btn._listening = True
+            m.listen(installed)
+        say(f"{key}: Update wird installiert …")
+        m.install([key])
+
+    def has_update_ask(latest):
+        btn.set_sensitive(True)
+        has_update(latest)
+        say(f"v{latest} ist da – nochmal auf „update“ klicken zum Installieren.")
+
+    btn.connect("clicked", clicked)
+    btn.recheck = lambda: check_update(key, version, has_update)
+    btn.recheck()
+    return btn
 
 
 # ---------- Darstellung ----------

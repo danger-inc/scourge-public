@@ -69,6 +69,8 @@ button.applink.updrow.has-upd .app-name { color: @primary; }
 
 
 def app_path(cmd):
+    if os.name == "nt":                        # Windows: Startmenü-Verknüpfung der Installation
+        return si.launcher(cmd)
     local = os.path.expanduser(f"~/.local/bin/{cmd}")
     return local if os.access(local, os.X_OK) else shutil.which(cmd)
 
@@ -163,6 +165,8 @@ class AppDrawer(Gtk.Box):
         title.add_css_class("drawer-title")
         panel.append(title)
         for cmd, icon, name, desc in APPS:
+            if os.name == "nt" and cmd not in si.WIN_APPS:     # nur, was es für Windows gibt
+                continue
             b = Gtk.Button(focus_on_click=False, hexpand=True)
             b.add_css_class("applink")
             row = Gtk.Box(spacing=10)
@@ -307,7 +311,7 @@ class AppDrawer(Gtk.Box):
 
     def _look(self, cmd):
         """(Symbol | "spin" | None, Tooltip, Beschreibung) für die App-Zeile."""
-        if not si.SUPPORTED or cmd not in si.APPS:
+        if not si.SUPPORTED or cmd not in si.APPS or (os.name == "nt" and cmd not in si.WIN_APPS):
             return None, None, None
         info = self.mgr.info[cmd]
         if info.get("busy"):
@@ -408,6 +412,11 @@ class AppDrawer(Gtk.Box):
         exe = app_path("scourge")
         if not exe:
             return
+        if os.name == "nt":                    # Windows: kurz warten, dann die Startmenü-Verknüpfung öffnen
+            subprocess.Popen(["cmd", "/c", f'timeout /t 2 /nobreak >nul & start "" "{exe}"'], creationflags=0x00000008)
+            self.app.notify("scourge startet neu …")
+            GLib.timeout_add(300, lambda: (self.app.activate_action("quit", None), False)[-1])
+            return
         subprocess.Popen(["sh", "-c", 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0"', exe,
                           str(os.getpid())], start_new_session=True, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -507,6 +516,13 @@ class AppDrawer(Gtk.Box):
         self.close()
         if not path:
             return self.app.notify(f"{name} ist nicht installiert")
+        if os.name == "nt":
+            try:
+                os.startfile(path)
+                self.app.notify(f"{name} wird geöffnet")
+            except OSError as e:
+                self.app.notify(f"{name} ließ sich nicht starten: {e.strerror}")
+            return
         env = dict(os.environ)
         for k in ("LD_PRELOAD", "GSK_RENDERER"):     # nichts von Scourges Umgebung vererben
             env.pop(k, None)

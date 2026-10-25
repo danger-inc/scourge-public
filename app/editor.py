@@ -296,6 +296,8 @@ class MemeEditor(Gtk.Box):
         row = Gtk.Box(spacing=10)
         l = Gtk.Label(label=text, xalign=0, width_chars=7)
         l.add_css_class("key")
+        if isinstance(widget, Gtk.Scale):
+            ch.reset_on_dblclick(l, widget, widget.get_value())
         row.append(l)
         row.append(widget)
         return row
