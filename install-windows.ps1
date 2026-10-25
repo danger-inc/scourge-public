@@ -1,4 +1,4 @@
-﻿# install-windows.ps1 – installiert scourge, notist oder datist unter Windows 10/11.
+﻿# install-windows.ps1 – installiert scourge, notist, datist oder musicalist unter Windows 10/11.
 # Starten: Doppelklick auf install-windows.bat   (Entfernen: uninstall-windows.bat)
 # Ablauf: MSYS2 (liefert GTK 4 + Python für Windows) einrichten → Pakete → App nach %USERPROFILE%\.local\share
 # kopieren → Startmenü-Verknüpfung. Admin-Rechte braucht nur die einmalige MSYS2-Installation.
@@ -34,8 +34,23 @@ if (Test-Path "$Src\app\scourge.py") {
         Copy-Item "$Src\app\fonts\*" "$Share\rice-apps\fonts" -Force
         Copy-Item "$Src\datist.ico" $App.Dir -Force
     }
+} elseif (Test-Path "$Src\app\music\musicd.py") {
+    # musicalist: Kernfunktionen (Player, Suche, Bibliothek, Lyrics, Verlauf); ohne Hover-Vorschau, Spektrum, Medientasten.
+    # Python-Pakete (ytmusicapi, yt-dlp …) kommen per pip in <App>\pylibs; Anmeldung/Zustand bleiben bei Updates erhalten.
+    $App = @{ Name = 'musicalist'; Dir = "$Share\rice-apps\music"; Main = 'musicd.py'; Args = '--show'; Icon = 'musicalist.ico'
+              Fonts = $null
+              Keep = @('auth', 'state.json', 'settings.json', 'history.json', 'plays.json')
+              Pip = @('ytmusicapi>=1.10', 'yt-dlp', 'yt-dlp-ejs', 'requests')
+              Pkgs = $Base + @('python-pip', 'mpv', 'nodejs', 'python-certifi', 'python-pillow', 'python-numpy') }
+    $Copy = {
+        Copy-Item "$Src\app\music\*" $App.Dir -Recurse -Force
+        Copy-Item "$Src\app\*.py" "$Share\rice-apps" -Force
+        New-Item -ItemType Directory -Force "$Share\rice-apps\fonts" | Out-Null
+        Copy-Item "$Src\app\fonts\*" "$Share\rice-apps\fonts" -Force
+        Copy-Item "$Src\musicalist.ico" $App.Dir -Force
+    }
 } else {
-    throw 'Dieses Skript gehört in den Ordner von scourge, notist oder datist.'
+    throw 'Dieses Skript gehört in den Ordner von scourge, notist, datist oder musicalist.'
 }
 $Programs = [Environment]::GetFolderPath('Programs')
 $Desktop = [Environment]::GetFolderPath('Desktop')
@@ -44,7 +59,12 @@ $Lnk = "$($App.Name).lnk"
 # ------------------------------------------------------------------ entfernen
 if ($Uninstall) {
     Say "== $($App.Name) entfernen =="
-    Remove-Item -Recurse -Force $App.Dir -ErrorAction SilentlyContinue
+    if ($App.Keep) {      # Anmeldung/Zustand bleiben liegen
+        Get-ChildItem $App.Dir -Force -ErrorAction SilentlyContinue | Where-Object { $App.Keep -notcontains $_.Name } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Remove-Item -Recurse -Force $App.Dir -ErrorAction SilentlyContinue
+    }
     Remove-Item -Force "$Programs\$Lnk", "$Desktop\$Lnk" -ErrorAction SilentlyContinue
     Say "$($App.Name) entfernt. Deine Daten/Einstellungen und MSYS2 (C:\msys64) bleiben."
     return
@@ -102,9 +122,25 @@ if (-not (Test-Path $PyW)) { throw "Python fehlt in MSYS2 ($PyW) – Paketinstal
 
 # ------------------------------------------------------------------ App kopieren
 Say "Kopiere $($App.Name) nach $($App.Dir) ..."
+# Anmeldung, Zustand und Einstellungen (App.Keep) überleben die Neuinstallation
+$KeepDir = Join-Path $env:TEMP ('keep-' + $App.Name)
+if ($App.Keep) {
+    Remove-Item -Recurse -Force $KeepDir -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $KeepDir | Out-Null
+    foreach ($k in $App.Keep) { if (Test-Path "$($App.Dir)\$k") { Copy-Item "$($App.Dir)\$k" $KeepDir -Recurse -Force } }
+}
 if (Test-Path $App.Dir) { Remove-Item -Recurse -Force $App.Dir }
 New-Item -ItemType Directory -Force $App.Dir | Out-Null
 & $Copy
+if ($App.Keep) {
+    foreach ($k in $App.Keep) { if (Test-Path "$KeepDir\$k") { Copy-Item "$KeepDir\$k" $App.Dir -Recurse -Force } }
+    Remove-Item -Recurse -Force $KeepDir -ErrorAction SilentlyContinue
+}
+if ($App.Pip) {
+    Say 'Python-Pakete (pip) ...'
+    & $Py -m pip install --upgrade --target (Join-Path $App.Dir 'pylibs') $App.Pip | Out-Host
+    if ($LASTEXITCODE -ne 0) { Warn 'pip meldete Fehler – ytmusicapi/yt-dlp fehlen evtl.; Skript erneut starten.' }
+}
 
 # ------------------------------------------------------------------ Schrift (Oberfläche) – nur für diesen Benutzer
 if ($App.Fonts -and (Test-Path $App.Fonts)) {
@@ -136,7 +172,7 @@ function New-Link($path) {
     $ws = New-Object -ComObject WScript.Shell
     $l = $ws.CreateShortcut($path)
     $l.TargetPath = $PyW
-    $l.Arguments = '"' + (Join-Path $App.Dir $App.Main) + '"'
+    $l.Arguments = '"' + (Join-Path $App.Dir $App.Main) + '"' + $(if ($App.Args) { ' ' + $App.Args } else { '' })
     $l.WorkingDirectory = $App.Dir
     $l.IconLocation = $IconPath + ',0'
     $l.Description = $App.Name
