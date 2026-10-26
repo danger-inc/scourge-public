@@ -589,9 +589,13 @@ def _install_css(colors_css=None):
     css = FALLBACK
     if colors_css is None:
         try:
-            colors_css = open(MATUGEN_CSS).read()
-        except OSError:
-            colors_css = ""
+            import istheme
+            colors_css = istheme.resolve()[0]
+        except Exception:
+            try:
+                colors_css = open(MATUGEN_CSS).read()
+            except OSError:
+                colors_css = ""
     # Alle Farbnamen bekommen das Präfix cl_: @define-color gilt in GTK für das ganze Programm, und dieser
     # Provider liegt über dem der App – mit den echten Namen fror er deren Farben beim ersten Öffnen ein
     # (Super+W wirkte danach nicht mehr).

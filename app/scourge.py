@@ -1931,8 +1931,7 @@ class Scourge(Gtk.Application):
         if "@define-color" not in src:          # matugen schreibt noch → gleich nochmal
             self._css_timer = GLib.timeout_add(250, self._colors_settled)
             return False
-        if src != self._css_src:
-            self.load_css()
+        self.load_css()
         return False
 
     def _redraw_all(self):
@@ -1960,10 +1959,15 @@ class Scourge(Gtk.Application):
         from player import PLAYER_CSS
         css = FALLBACK_COLORS
         try:
-            self._css_src = open(MATUGEN_CSS).read()
-            css += self._css_src
-        except OSError:
-            pass
+            import istheme
+            self._css_src, light = istheme.resolve()      # gewähltes Design, sonst matugen (hell/dunkel nach Wahl)
+            istheme.apply_gtk(light)
+        except ImportError:
+            try:
+                self._css_src = open(MATUGEN_CSS).read()
+            except OSError:
+                self._css_src = ""
+        css += self._css_src
         import chrome
         from drawer import DRAWER_CSS
         PUBLISH_CSS = ""
@@ -1990,6 +1994,11 @@ class Scourge(Gtk.Application):
             Gio.FileMonitorFlags.WATCH_MOVES, None)
         self.monitor.set_rate_limit(100)
         self.monitor.connect("changed", self._on_colors_changed)
+        try:
+            import istheme
+            self.theme_mon = istheme.watch(self.load_css)       # Design in den Einstellungen irgendeiner -ist-App
+        except ImportError:
+            pass
 
         self.win = Gtk.ApplicationWindow(application=self, title="Scourge")
         self.win.set_default_size(*getattr(glass, "fit_size", lambda w, h: (w, h))(1200, 780))   # kleine Bildschirme

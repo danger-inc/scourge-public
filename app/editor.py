@@ -15,6 +15,15 @@ from PIL import Image, ImageOps
 
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
 
+def _theme_text():
+    """Farben des gewählten Designs (istheme: Auswahl + Hell/Dunkel), sonst die von matugen."""
+    try:
+        import istheme
+        return istheme.resolve()[0]
+    except ImportError:
+        return open(MATUGEN_CSS).read()
+
+
 PALETTE = ["#ffffff", "#000000", "#ff3b30", "#ffd60a", "#34c759", "#0a84ff", "#ff6ac1"]
 RATIOS = [("Frei", None), ("1:1", 1.0), ("4:3", 4 / 3), ("16:9", 16 / 9), ("9:16", 9 / 16)]
 
@@ -432,7 +441,7 @@ class MemeEditor(Gtk.Box):
     # ================= Bild & Zustand =================
     def reload_colors(self):
         try:
-            m = re.search(r"@define-color color9 (#[0-9a-fA-F]{6})", open(MATUGEN_CSS).read())
+            m = re.search(r"@define-color color9 (#[0-9a-fA-F]{6})", _theme_text())
             if m:
                 self.accent = hex_to_rgb(m.group(1))
         except OSError:

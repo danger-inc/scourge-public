@@ -201,9 +201,15 @@ class PdfApp(Gtk.Application):
         parts = scourge_css()
         css = parts.get("FALLBACK_COLORS", "")
         try:
-            css += open(MATUGEN_CSS).read()
-        except OSError:
-            pass
+            import istheme
+            colors, light = istheme.resolve()
+            istheme.apply_gtk(light)
+            css += colors
+        except ImportError:
+            try:
+                css += open(MATUGEN_CSS).read()
+            except OSError:
+                pass
         try:
             from swipe import CSS as SWIPE_CSS
         except ImportError:
@@ -226,6 +232,11 @@ class PdfApp(Gtk.Application):
                 Gio.FileMonitorFlags.WATCH_MOVES, None)
             self.mon.connect("changed", lambda *_: GLib.timeout_add(250, lambda: (self.load_css(), False)[-1]))
         except GLib.Error:
+            pass
+        try:
+            import istheme
+            self.theme_mon = istheme.watch(self.load_css)
+        except ImportError:
             pass
         self.win = Gtk.ApplicationWindow(application=self, title="scourge-pdf")
         self.win.add_css_class("pb-window")       # Schrift, Hintergrund und Glas wie in Scourge

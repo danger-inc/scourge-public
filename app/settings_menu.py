@@ -148,8 +148,20 @@ def open_window(app, glass_toggle, cmd="scourge", name="Scourge", bgkey="backgro
     scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=body)
     root.append(scroll)
 
+    c = ch.Card("design", spacing=10)
+    try:
+        import istheme
+        c.append(istheme.picker())
+        n = Gtk.Label(label="„Automatisch“ übernimmt die Farben deines Desktops (matugen) – dunkel oder hell nach Wahl. "
+                            "Das Design gilt für alle -ist-Apps.", xalign=0, wrap=True)
+        n.add_css_class("note")
+        c.append(n)
+    except ImportError:
+        pass
+    body.append(c)
+
     if glass.AVAILABLE:
-        c = ch.Card("design", spacing=10)
+        c = ch.Card("glas", spacing=10)
         sw = _switch(glass_toggle.get_active(), lambda v: glass_toggle.set_active(v))
         glass_toggle.connect("toggled", lambda g: sw.get_active() != g.get_active() and sw.set_active(g.get_active()))
         c.append(_row("glas-effekt", "Fenster scheinen durch wie die Konsole (gilt für alle Apps der Suite)", sw))

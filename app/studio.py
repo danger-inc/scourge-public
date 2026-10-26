@@ -15,6 +15,15 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
 
+def _theme_text():
+    """Farben des gewählten Designs (istheme: Auswahl + Hell/Dunkel), sonst die von matugen."""
+    try:
+        import istheme
+        return istheme.resolve()[0]
+    except ImportError:
+        return open(MATUGEN_CSS).read()
+
+
 STUDIO_CSS = """
 .studio-top { margin: 6px 16px 0 16px; }
 .studio-side { margin: 0 0 16px 16px; }
@@ -137,7 +146,7 @@ def random_palette(rng):
 
 def theme_colors():
     try:
-        txt = open(MATUGEN_CSS).read()
+        txt = _theme_text()
     except OSError:
         return {}
     return dict(re.findall(r"@define-color\s+(\w+)\s+(#[0-9a-fA-F]{6})", txt))

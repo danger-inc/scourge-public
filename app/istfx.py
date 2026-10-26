@@ -16,12 +16,21 @@ def effect(name, desc):
 # ---------------- Farben ----------------
 COLORS_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
 
+def _theme_text():
+    """Farben des gewählten Designs (istheme: Auswahl + Hell/Dunkel), sonst die von matugen."""
+    try:
+        import istheme
+        return istheme.resolve()[0]
+    except ImportError:
+        return open(COLORS_CSS).read()
+
+
 
 def palette():
     cols = {"background": "#1a1b26", "foreground": "#c0caf5", "primary": "#7aa2f7", "secondary": "#bb9af7",
             "tertiary": "#9ece6a", "outline": "#565f89"}
     try:
-        txt = open(COLORS_CSS).read()
+        txt = _theme_text()
         for k, v in re.findall(r"@define-color\s+(\w+)\s+(#[0-9a-fA-F]{6})", txt):
             cols.setdefault(k, v)
             cols[k] = v
@@ -35,10 +44,13 @@ GEN = [0]             # zählt Farbwechsel; Effekte mit vorberechneten Verläufe
 
 
 def colors_mtime():
-    try:
-        return os.stat(COLORS_CSS).st_mtime_ns
-    except OSError:
-        return 0
+    t = 0
+    for p in (COLORS_CSS, os.path.expanduser("~/.config/ist-theme.json")):
+        try:
+            t = max(t, os.stat(p).st_mtime_ns)
+        except OSError:
+            pass
+    return t
 
 
 def reload_palette():

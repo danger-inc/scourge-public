@@ -1033,10 +1033,11 @@ class CutterPage(Gtk.Box):
     def accent(self):
         import re
         try:
-            m = re.search(r"@define-color color9 (#[0-9a-fA-F]{6})", open(os.path.expanduser("~/.cache/matugen/colors.css")).read())
+            import istheme
+            m = re.search(r"@define-color color9 (#[0-9a-fA-F]{6})", istheme.resolve()[0])
             hx = m.group(1)
             return tuple(int(hx[i:i + 2], 16) / 255 for i in (1, 3, 5))
-        except (OSError, AttributeError):
+        except (OSError, AttributeError, ImportError):
             return (1.0, 0.71, 0.56)
 
     def draw_timeline(self, area, cr, w, h):
