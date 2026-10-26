@@ -199,6 +199,8 @@ def apply(key):
     stamp = _stamp(src)
     try:
         done = open(stamp_file).read() == stamp and all(os.path.isfile(_png_path(name, n)) for n in SIZES)
+        if done and src.endswith(".svg"):      # ein Update kann die SVG mit dem Standardlogo überschreiben
+            done = os.path.isfile(svg) and os.path.getmtime(svg) <= os.path.getmtime(stamp_file)
     except OSError:
         done = False
     changed = False

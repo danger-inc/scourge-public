@@ -865,9 +865,18 @@ class Tab(Gtk.Box):
             return False
         return self.page() != "home"
 
+    def page_parent(self, page):
+        """Übergeordnete Seite statt Start (z. B. README → Suite-Apps), sonst None."""
+        if page.startswith("tool-readme-") and "tool-software-suite" in self.pages:
+            return "tool-software-suite"
+        return None
+
     def go_back(self):
         page = self.page()
-        if page == "editor":
+        up = self.page_parent(page)
+        if up:
+            self.swipe_goto((up, None))
+        elif page == "editor":
             self.leave_editor()
         elif page == "main" and self.parents:
             self.go_parent()
@@ -883,6 +892,8 @@ class Tab(Gtk.Box):
             return "editor"
         if page == "osint":
             return "analyse"
+        if page == "tool-software-suite":
+            return "suite-apps"
         t = getattr(self, "PAGE_TITLES", {}).get(page) or PAGE_TITLES.get(page)
         return (t or page.replace("tool-", "")).lower()
 
@@ -895,7 +906,10 @@ class Tab(Gtk.Box):
     def swipe_target(self):
         """Wohin go_back() führt – muss zur Logik dort passen."""
         page = self.page()
-        if page == "editor":
+        up = self.page_parent(page)
+        if up:
+            key = (up, None)
+        elif page == "editor":
             key = ("main", self.source)
         elif page == "osint":
             key = ("main", self.parents[-1]) if self.parents else ("main", self.source)
