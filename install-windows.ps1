@@ -130,13 +130,22 @@ function Msys($cmd) {
     return $LASTEXITCODE
 }
 
-if (-not $Update -or -not (Test-Path "$Msys\ucrt64\bin\pythonw.exe")) {
+# Was fehlt noch? `pacman -T` listet nur nicht erfüllte Pakete (ohne Netz, ohne Download). Ist alles da, wird weder
+# die Paketdatenbank synchronisiert noch irgendetwas heruntergeladen.
+$want = $App.Pkgs | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }
+$missing = @(Native { & "$Msys\usr\bin\bash.exe" -lc ("pacman -T " + ($want -join ' ')) 2>$null } |
+    ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+if (-not (Test-Path "$Msys\ucrt64\bin\pythonw.exe")) { $missing += 'python' }
+if ($missing.Count -eq 0) {
+    Say 'Alle benötigten Pakete sind bereits installiert – es wird nichts heruntergeladen.'
+} else {
+    Say ("Es fehlen {0} Paket(e): {1}" -f $missing.Count, (($missing | ForEach-Object { $_ -replace '^mingw-w64-ucrt-x86_64-', '' }) -join ', '))
     Say 'Pakete aktualisieren und installieren (dauert beim ersten Mal einige Minuten) ...'
+    # MSYS2 unterstützt keine Teil-Updates: erst das System aktualisieren, dann nachinstallieren.
     # Das erste Update erneuert oft MSYS2 selbst und beendet sich dann – deshalb zweimal.
-    Msys 'pacman -Syuu --noconfirm' | Out-Null
-    Msys 'pacman -Syuu --noconfirm' | Out-Null
-    $pk = ($App.Pkgs | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }) -join ' '
-    if ((Msys "pacman -S --needed --noconfirm $pk") -ne 0) {
+    Msys 'pacman -Syu --noconfirm' | Out-Null
+    Msys 'pacman -Syu --noconfirm' | Out-Null
+    if ((Msys ("pacman -S --needed --noconfirm " + ($want -join ' '))) -ne 0) {
         Warn 'Nicht alle Pakete ließen sich installieren – siehe Meldungen oben. Weiter.'
     }
 }
