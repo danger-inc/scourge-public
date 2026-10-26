@@ -1,5 +1,19 @@
+<!-- gh-header -->
+<div align="center">
+
+<img src="app/logo/scourge.svg" width="88" alt="scourge">
 
 # scourge
+
+**one stop for all, kinda. inspect files, edit pdfs & videos, record the screen, build memes**
+
+<img src="https://img.shields.io/badge/GTK-4-4A86CF?style=flat-square&logo=gtk&logoColor=white" alt="GTK"> <img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="python"> <img src="https://img.shields.io/badge/platform-linux%20·%20windows-2E7D6B?style=flat-square&logo=linux&logoColor=white" alt="platform"> <img src="https://img.shields.io/badge/made%20for-wayland%20·%20hyprland-7C6BC4?style=flat-square" alt="made for">
+
+</div>
+
+<p align="center"><img src="docs/scourge.png" width="860" alt="scourge screenshot"></p>
+
+<p align="center"><!-- gh-note --><sub>tip: the glass button (󰃝, top right) makes the window see-through, like the terminal – needs a compositor with blur, e.g. hyprland.</sub></p>
 
 inspect files (metadata/exif), edit pdfs, record screen,
 videos cut (edit videos), build memes, generate gradients & ascii art – a gtk4 app for linux.
@@ -148,3 +162,22 @@ font remain.
 `~/.bashrc`). from the application menu it starts anyway.
 * **videos don't play:** gstreamer plugins missing (`gstreamer1.0-libav` or `gst-libav`) – `./install.sh`
 again and for system packages "y".
+
+<!-- gh-suite -->
+## the -ist suite
+
+all apps share one look (terminal style, colors from your wallpaper via matugen), one installer and the same shortcuts.
+
+| app | what it does |
+| --- | --- |
+| [notist](https://github.com/danger-inc/notist-public) | notes · words · latex |
+| [filist](https://github.com/danger-inc/filist-public) | file explorer + file dialog |
+| [datist](https://github.com/danger-inc/datist) | calendar |
+| [mailist](https://github.com/danger-inc/mailist-public) | mail |
+| [musicalist](https://github.com/danger-inc/musicalist-public) | youtube music |
+| [linguist](https://github.com/danger-inc/linguist) | translator + hover corner |
+| [sharist](https://github.com/danger-inc/sharist) | quick share |
+| [wallist](https://github.com/danger-inc/wallist) | wallpapers |
+| [inquirist](https://github.com/danger-inc/inquirist) | launcher |
+
+dotfiles with the matching hyprland setup: [danger-inc/dotfiles](https://github.com/danger-inc/dotfiles)
