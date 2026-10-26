@@ -400,6 +400,92 @@ def icon_widget(key, glyph, size=48):
     return l
 
 
+SHARE = os.path.expanduser("~/.local/share")
+
+
+def readme_path(key):
+    """Quell-README der App (wird beim Veröffentlichen ins Repo kopiert)."""
+    p = {"scourge": "scourge-packaging", "notist": "notes/packaging", "filist": "filist/packaging"}.get(
+        key, f"rice-apps-packaging/{key}")
+    f = os.path.join(SHARE, p, "README.md")
+    return f if os.path.isfile(f) else None
+
+
+class ReadmeEditor(ToolPage):
+    """README einer Suite-App bearbeiten (Quelldatei; kommt beim Veröffentlichen ins GitHub-Repo)."""
+    subtitle = ""
+
+    def __init__(self, tab, key, name, path):
+        self.key, self.name, self.path = key, name, path
+        self.title = f"README · {name}"
+        super().__init__(tab)
+
+    def build(self):
+        c = self.card("readme")
+        info = Gtk.Label(label=self.path.replace(os.path.expanduser("~"), "~") +
+                         " – Kopf (gh-header) und Suite-Tabelle (gh-suite) werden beim Veröffentlichen "
+                         "mitgenommen; die Marker-Zeilen <!-- … --> stehen lassen.", xalign=0, wrap=True)
+        info.add_css_class("note")
+        c.append(info)
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            text = ""
+            self.tab.notify(f"README nicht lesbar: {e}")
+        self.orig = text
+        self.tv = Gtk.TextView(monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=6, bottom_margin=6,
+                               left_margin=8, right_margin=8)
+        self.tv.add_css_class("adm-log")
+        self.buf = self.tv.get_buffer()
+        self.buf.set_text(text)
+        sc = Gtk.ScrolledWindow(min_content_height=380, hexpand=True, vexpand=True)
+        sc.set_child(self.tv)
+        c.append(sc)
+        row = Gtk.Box(spacing=8)
+        self.state = Gtk.Label(label="", xalign=0, hexpand=True)
+        self.state.add_css_class("note")
+        self.save_btn = self.button("󰆓 speichern", self.save, "In die Quell-README schreiben (Strg+S)", small=True)
+        row.append(self.save_btn)
+        row.append(self.button("󰜉 zurücksetzen", self.revert, "Änderungen verwerfen", small=True))
+        row.append(self.state)
+        c.append(row)
+        self.buf.connect("changed", lambda *_: self.mark())
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", lambda _c, kv, _k, st: (self.save(), True)[-1] if
+                     kv == Gdk.KEY_s and st & Gdk.ModifierType.CONTROL_MASK else False)
+        self.tv.add_controller(keys)
+        self.mark()
+
+    def text(self):
+        return self.buf.get_text(self.buf.get_start_iter(), self.buf.get_end_iter(), False)
+
+    def mark(self):
+        self.state.set_label("● ungespeichert" if self.text() != self.orig else "gespeichert")
+
+    def save(self):
+        t = self.text()
+        if t == self.orig:
+            return
+        bak = self.path + ".bak-scourge"
+        try:
+            if not os.path.exists(bak):                 # einmalige Sicherung des ursprünglichen Stands
+                shutil.copy2(self.path, bak)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(t)
+            os.replace(tmp, self.path)
+        except OSError as e:
+            self.tab.notify(f"Nicht gespeichert: {e}")
+            return
+        self.orig = t
+        self.mark()
+        self.tab.notify(f"README von {self.name} gespeichert (kommt beim Veröffentlichen mit)")
+
+    def revert(self):
+        self.buf.set_text(self.orig)
+
+
 ADMIN_CSS = """
 separator.adm-sep { background: alpha(@primary, 0.15); min-height: 1px; margin: 2px 0; }
 flowbox.adm-flow > flowboxchild { padding: 0; background: none; }
@@ -487,34 +573,46 @@ class SuiteApps(ToolPage):
         top.append(info)
         c.append(top)
 
-        row = Gtk.Box(spacing=8)
+        # umbrechende Reihe: im halben Fenster rutschen die Knöpfe in die nächste Zeile statt abgeschnitten zu werden
+        row = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=8, row_spacing=6,
+                          max_children_per_line=12, homogeneous=False)
+        row.add_css_class("adm-flow")
+
+        def put(w):
+            w.set_halign(Gtk.Align.START)
+            row.append(w)
+            row.get_last_child().set_focusable(False)
         if start:
-            row.append(self.button("󰐊 öffnen", lambda s=start, n=name: self.launch(s, n), small=True))
+            put(self.button("󰐊 öffnen", lambda s=start, n=name: self.launch(s, n), small=True))
         if isinstance(settings, list):
-            row.append(self.button("󰒓 einstellungen", lambda s=settings, n=name: self.launch(s, n), small=True))
+            put(self.button("󰒓 einstellungen", lambda s=settings, n=name: self.launch(s, n), small=True))
         elif settings:
-            h = Gtk.Label(label=settings, xalign=0)
+            h = Gtk.Label(label=settings, xalign=0, wrap=True, max_width_chars=40)
             h.add_css_class("note")
-            row.append(h)
-        spacer = Gtk.Box(hexpand=True)
-        row.append(spacer)
+            put(h)
         auto = autostart(cmd, text)
         if auto is not None:
             l = Gtk.Label(label="vorladen beim anmelden")
             l.add_css_class("note")
+            grp = Gtk.Box(spacing=8)
             sw = Gtk.Switch(active=auto, valign=Gtk.Align.CENTER,
                             tooltip_text="Startet die App beim Anmelden unsichtbar im Hintergrund (hyprland.lua) – "
                                          "das Fenster ist dann sofort da")
             sw.connect("state-set", lambda s, on, cm=cmd: (set_autostart(cm, on) and
                                                             self.tab.notify(f"{cm}: Autostart {'an' if on else 'aus'} "
                                                                             "(ab der nächsten Anmeldung)"), False)[-1])
-            row.append(l)
-            row.append(sw)
-        row.append(self.button("󰋩 icon wählen", lambda k=key: self.pick_icon(k), small=True))
+            grp.append(l)
+            grp.append(sw)
+            put(grp)
+        put(self.button("󰋩 icon wählen", lambda k=key: self.pick_icon(k), small=True))
         if icons.has_custom(key):
-            row.append(self.button("󰜉 icon zurücksetzen", lambda k=key: self.reset_icon(k), small=True))
+            put(self.button("󰜉 icon zurücksetzen", lambda k=key: self.reset_icon(k), small=True))
+        rp = readme_path(key)
+        if rp:
+            put(self.button("󰍔 readme", lambda k=key, n=name, r=rp: self.open_readme(k, n, r),
+                            "README dieser App hier bearbeiten", small=True))
         if os.path.isdir(os.path.expanduser(cfg)):
-            row.append(self.button("󰉋", lambda p=cfg: self.open_dir(p), "Daten-/Einstellungsordner öffnen", small=True))
+            put(self.button("󰉋", lambda p=cfg: self.open_dir(p), "Daten-/Einstellungsordner öffnen", small=True))
         c.append(row)
         if key in ADMIN and installed:
             self.admin_rows(c, key, name, start)
@@ -582,6 +680,9 @@ class SuiteApps(ToolPage):
         except ImportError:                     # öffentliche Ausgabe: ohne Veröffentlichen-Seite
             return None
         return publish if publish.available() else None
+
+    def open_readme(self, key, name, path):
+        self.tab.open_page("tool-readme-" + key, lambda: ReadmeEditor(self.tab, key, name, path))
 
     def open_publish(self):
         publish = self.publish_page()

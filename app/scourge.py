@@ -2226,6 +2226,12 @@ class Scourge(Gtk.Application):
 
 
 if __name__ == "__main__":
+    try:        # Absturzspur (Python-Stapel) für Abstürze in GTK: ~/.cache/scourge/crash.log
+        import faulthandler
+        os.makedirs(os.path.expanduser("~/.cache/scourge"), exist_ok=True)
+        faulthandler.enable(open(os.path.expanduser("~/.cache/scourge/crash.log"), "a"), all_threads=True)
+    except OSError:
+        pass
     if "--quit" in sys.argv:                 # wirklich beenden (z. B. nach einem Update)
         app = Scourge()
         app.register(None)
