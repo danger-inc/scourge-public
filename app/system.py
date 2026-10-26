@@ -88,7 +88,7 @@ SECTIONS = {
     "audio": ("Ton", "Lautstärke, Mikrofon und Ausgabegerät."),
     "input": ("Eingabe", "Maus-Empfindlichkeit, Touchpad und Tastaturlayout."),
     "radio": ("Funk", "WLAN und Bluetooth."),
-    "cursor": ("Cursor", "Farbe, Form und Verhalten des Mauszeigers. Änderungen gelten sofort überall."),
+    "cursor": ("Cursor", "Mauszeiger und animierter Text-Cursor. Änderungen gelten sofort überall."),
     "waybar": ("Waybar", "Statusleiste zurückholen, wenn sie abgestürzt oder hängen geblieben ist."),
 }
 
@@ -149,11 +149,11 @@ class SystemSettings(ToolPage):
             "audio": [self.audio_card],
             "input": [self.mouse_card, self.keyboard_card],
             "radio": [self.radio_card],
-            "cursor": [self.cursor_cards],
+            "cursor": [self.cursor_cards, self.caret_card],
             "waybar": [self.waybar_cards],
         }
         for b in builders.get(self.section, [self.display_card, self.audio_card, self.mouse_card,
-                                             self.keyboard_card, self.radio_card, self.cursor_cards]):
+                                             self.keyboard_card, self.radio_card, self.cursor_cards, self.caret_card]):
             b()
 
     # ---------- kleine Bausteine ----------
@@ -364,6 +364,36 @@ class SystemSettings(ToolPage):
             self.run(lambda: sh(["bluetoothctl", "power", "on" if on else "off"]), lambda *_: None)
 
     # ---------- Cursor ----------
+    def caret_card(self):
+        """Animierter Text-Cursor der ganzen -ist-Suite (glass.py liest die Werte live aus den rice-apps-Einstellungen)."""
+        import glass
+        cfg = glass.load()
+        c = self.card("Text-Cursor")
+
+        def put(key, val):
+            data = glass.load()
+            data[key] = val
+            os.makedirs(os.path.dirname(glass.SETTINGS), exist_ok=True)
+            tmp = glass.SETTINGS + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=1)
+            os.replace(tmp, glass.SETTINGS)
+
+        on = bool(cfg.get("caret_trail", True))
+        box = []
+        self.switch_row(c, "Animierter Text-Cursor", on,
+                        lambda state: (put("caret_trail", bool(state)), [w.set_sensitive(bool(state)) for w in box]),
+                        sub="Aus = normaler blinkender Cursor in allen Apps der Suite.")
+        strength = self.slider(c, "Spurstärke", 0, 200, float(cfg.get("caret_trail_strength", 100)),
+                               lambda v: self._debounce("caret", lambda: put("caret_trail_strength", int(v)), 120),
+                               step=5, unit=" %")
+        n = Gtk.Label(label="0 % = Cursor springt ohne Spur, 100 % = wie in kitty, mehr = längerer Schmierstreifen.",
+                      xalign=0, wrap=True)
+        n.add_css_class("note")
+        c.append(n)
+        box.append(strength)
+        strength.set_sensitive(on)
+
     def cursor_cards(self):
         g = cursor_gen()
         if not g:

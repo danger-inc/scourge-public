@@ -257,6 +257,24 @@ CARET_FAST = 0.03         # Zeitkonstante (s) der vorauseilenden Ecken
 CARET_SLOW = 0.10          # … der nachziehenden Ecken (je größer der Abstand, desto dicker der Streifen)
 CARET_IDLE = 0.6           # Ruhe (s) bis zum Blinken
 CARET_BLINK = 0.53         # Halbperiode des Blinkens (s)
+_caret_cfg_cache = [0.0, True, 1.0]     # Stand, an, Stärke
+
+
+def caret_cfg():
+    """(an, Stärke) aus ~/.config/rice-apps/settings.json (caret_trail / caret_trail_strength in %), live alle 0,5 s."""
+    c = _caret_cfg_cache
+    now = time.monotonic()
+    if now - c[0] > 0.5:
+        c[0] = now
+        d = load()
+        c[1] = bool(d.get("caret_trail", True))
+        try:
+            c[2] = max(0.0, min(2.0, float(d.get("caret_trail_strength", 100)) / 100))
+        except (TypeError, ValueError):
+            c[2] = 1.0
+    return c[1], c[2]
+
+
 CARET_CSS = """
 .ist-caret, .ist-caret text { caret-color: transparent; -gtk-secondary-caret-color: transparent; }
 """
@@ -274,7 +292,7 @@ def _caret_widget(w):
 def caret_active(w):
     """Für selbst gezeichnete Textfelder: True, wenn die Cursor-Ebene den Cursor übernimmt (dann nicht selbst zeichnen)."""
     root = w.get_root()
-    return root is not None and getattr(root, "_ist_caret", None) is not None and not os.environ.get("IST_NO_CARET")
+    return root is not None and getattr(root, "_ist_caret", None) is not None and not os.environ.get("IST_NO_CARET") and caret_cfg()[0]
 
 
 def _caret_rect(w):
@@ -369,7 +387,7 @@ class CaretTrail(Gtk.DrawingArea):
         if win is None:
             self._poll_id = 0
             return False
-        w = win.get_focus() if win.is_active() else None
+        w = win.get_focus() if win.is_active() and caret_cfg()[0] else None
         if w is None or not _caret_widget(w) or not w.get_mapped() or w.get_native() is not win.get_native():
             if self._widget is not None:
                 self._release()
@@ -420,7 +438,7 @@ class CaretTrail(Gtk.DrawingArea):
         dx = (x + CARET_WIDTH / 2) - sum(c[0] for c in self._cur) / 4
         dy = (y + h / 2) - sum(c[1] for c in self._cur) / 4
         n = math.hypot(dx, dy)
-        if n < 1.5:
+        if n < 1.5 or caret_cfg()[1] < 0.05:
             self._cur = corners
             self.queue_draw()
             return
@@ -456,12 +474,13 @@ class CaretTrail(Gtk.DrawingArea):
             return GLib.SOURCE_REMOVE
         x, y, h = self._tgt
         goal = [(x, y), (x + CARET_WIDTH, y), (x + CARET_WIDTH, y + h), (x, y + h)]
+        f = max(caret_cfg()[1], 0.05)
         cx, cy = x + CARET_WIDTH / 2, y + h / 2
         far = 0.0
         for c, g in zip(self._cur, goal):
             # Ecken, die in Bewegungsrichtung vorn liegen, laufen schnell; die hinteren ziehen nach
             lead = (g[0] - cx) * self._dir[0] + (g[1] - cy) * self._dir[1] >= 0
-            k = 1 - math.exp(-dt / (CARET_FAST if lead else CARET_SLOW))
+            k = 1 - math.exp(-dt / ((CARET_FAST if lead else CARET_SLOW) * f))
             c[0] += (g[0] - c[0]) * k
             c[1] += (g[1] - c[1]) * k
             far = max(far, abs(g[0] - c[0]), abs(g[1] - c[1]))
