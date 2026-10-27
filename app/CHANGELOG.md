@@ -1,5 +1,10 @@
 # scourge – Änderungen
 
+## 2.14.1 (2026-10-27)
+- **Fenster verschieben (GNOME/KDE/Debian)**: Die Funktion fehlte in der veröffentlichten Fassung ganz; jetzt lässt sich das Fenster am Kopf ziehen, auch auf den Reitern (bei mehreren Reitern: senkrecht ziehen, waagerecht ordnet sie um).
+- **Scrollen**: Im Glas-Modus ruckelte es alle paar Bilder; behoben.
+- **Changelog**: Fenster öffnet auch mit älterem GTK.
+
 ## 2.14.0 (2026-10-27)
 - **Wechsel-Animation**: Der Wechsel zwischen Hell und Dunkel (und zwischen Designs) läuft als Scanbalken über den ganzen Bildschirm. Alle Fenster, die Leiste und das Terminal wechseln darunter im selben Moment, hinter dem Balken steht das neue Design. An/aus und Dauer (Standard 1,5 s) stehen in der Designauswahl der Einstellungen.
 

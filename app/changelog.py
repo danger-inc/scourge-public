@@ -606,7 +606,10 @@ def _install_css(colors_css=None):
         _provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), _provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_USER + 5)
-    _provider.load_from_string(css)
+    try:
+        _provider.load_from_string(css)
+    except AttributeError:                 # GTK < 4.12 (z. B. Debian 12): kein load_from_string
+        _provider.load_from_data(css.encode())
 
 
 _open = {}

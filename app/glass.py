@@ -97,6 +97,50 @@ def frame_window(win):
         win.add_css_class("framed")
 
 
+def make_movable(win, notebook):
+    """GNOME/KDE: die Titelleiste ist unsichtbar, also lässt sich das Fenster am freien Platz der Tab-Leiste
+    (nicht auf Tabs, Knöpfen oder Seiteninhalt) ziehen. Kachel-WM/Windows brauchen das nicht."""
+    if tiling_desktop() or os.name == "nt":
+        return
+    from gi.repository import Gtk
+    drag = Gtk.GestureDrag(button=1)
+    drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    state = {"ok": False}
+
+    def free(x, y):
+        """None: nicht ziehbar, "free": freier Platz, "tab": auf einem Reiter (die Reiter füllen die Kopfzeile,
+        freien Platz gibt es kaum – sonst ließ sich das Fenster auf GNOME/KDE nicht mehr verschieben)."""
+        w = notebook.pick(x, y, 0)
+        pages = [notebook.get_nth_page(i) for i in range(notebook.get_n_pages())]
+        kind = "free"
+        while w is not None and w is not notebook:
+            if isinstance(w, (Gtk.Button, Gtk.Entry, Gtk.Text, Gtk.Popover)) or w in pages:
+                return None
+            if w.get_css_name() == "tab":
+                kind = "tab"
+            w = w.get_parent()
+        return kind if w is notebook else None
+
+    def begin(g, x, y):
+        state["ok"] = free(x, y)
+
+    def update(g, dx, dy):
+        if not state["ok"] or dx * dx + dy * dy < 25:
+            return
+        if state["ok"] == "tab" and notebook.get_n_pages() > 1 and abs(dx) >= abs(dy):
+            return                              # waagerecht über mehreren Reitern = Reihenfolge ändern (Gtk), nicht das Fenster
+        state["ok"] = False
+        ok, sx, sy = g.get_start_point()
+        pt = notebook.compute_point(win, __import__("gi").repository.Graphene.Point().init(sx, sy))
+        surf = win.get_surface()
+        if surf is not None and pt[0]:
+            g.set_state(Gtk.EventSequenceState.CLAIMED)
+            surf.begin_move(g.get_device(), 1, pt[1].x, pt[1].y, g.get_current_event_time())
+    drag.connect("drag-begin", begin)
+    drag.connect("drag-update", update)
+    notebook.add_controller(drag)
+
+
 def _hypr(*args):
     out = subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=2).stdout
     return json.loads(out) if "-j" in args else out
@@ -334,6 +378,7 @@ class CaretTrail(Gtk.DrawingArea):
         self._poll_id = 0
         self._color = (0.9, 0.9, 0.9, 1.0)
         self.set_draw_func(self._draw)
+        self.set_opacity(0)                    # leer = unsichtbar: eine leere Vollfenster-Ebene kostet im Glas-Modus beim Scrollen Frames
         self.connect("map", self._start)
         self.connect("unmap", self._stop)
 
@@ -394,6 +439,7 @@ class CaretTrail(Gtk.DrawingArea):
         if self._tgt is not None:
             self._tgt = self._cur = None
             self.queue_draw()
+        self.set_opacity(0)
 
     def _poll(self):
         win = self._win()
@@ -426,6 +472,7 @@ class CaretTrail(Gtk.DrawingArea):
             if self._tgt is not None:
                 self._tgt = self._cur = None
                 self.queue_draw()
+            self.set_opacity(0)
             return True
         if r[4]:
             self._color = (*r[4], 1.0)
@@ -442,6 +489,7 @@ class CaretTrail(Gtk.DrawingArea):
     def _retarget(self, tgt):
         now = time.monotonic()
         old, self._tgt = self._tgt, tgt
+        self.set_opacity(1)
         self._moved, self._on = now, True
         x, y, h = tgt
         corners = [[x, y], [x + CARET_WIDTH, y], [x + CARET_WIDTH, y + h], [x, y + h]]
