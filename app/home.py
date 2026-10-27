@@ -56,6 +56,7 @@ ACTIONS = [
     ("meme", "󰏫", "Meme-Editor", "Bild oder Video wählen: Text oben/unten, Stift, Zuschneiden", False),
     ("studio", "󰏘", "Verlauf & ASCII", "Ästhetische Farbverläufe als PNG/JPG – und Bilder als ASCII-Kunst", False),
     ("compress", "\U000F0044", "Bilder komprimieren", "Viele Bilder auf einmal kleiner: Qualität, Zielgröße, WebP/AVIF", False),
+    ("convert", "󰈙", "Dokumente umwandeln", "PDFs zusammenfügen, Seiten teilen/drehen, PDF ⇄ Bild ⇄ Text ⇄ Word", False),
 ]
 
 
@@ -134,7 +135,7 @@ class HomePage(Gtk.ScrolledWindow):
                               "Dateien lassen sich auch einfach hierher ziehen.")
         fl = flow()
         cbs = {"open": tab.on_open_player, "file": tab.on_open_check, "record": tab.open_recorder, "cut": self.pick_video, "meme": self.pick_meme,
-               "studio": self.open_studio, "compress": self.open_compress}
+               "studio": self.open_studio, "compress": self.open_compress, "convert": self.open_convert}
         for key, icon, name, desc, primary in ACTIONS:
             fl.append(self.mk(icon, name, desc, cbs[key], primary))
         box.append(fl)
@@ -301,6 +302,10 @@ class HomePage(Gtk.ScrolledWindow):
     def open_studio(self):
         from studio import StudioPage
         self.tab.open_page("tool-studio", lambda: StudioPage(self.tab))
+
+    def open_convert(self):
+        from convert import ConvertPage
+        self.tab.open_page("tool-convert", lambda: ConvertPage(self.tab))
 
     def open_compress(self):
         from compress import CompressPage

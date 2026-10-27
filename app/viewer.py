@@ -446,13 +446,17 @@ class PdfView(Gtk.Box):
         keys.connect("key-pressed", self.on_key)
         self.add_controller(keys)
         self.keys = keys
-        zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+        zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
+        zoom.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         zoom.connect("scroll", self.on_scroll)
         self.scroll.add_controller(zoom)
+        self._pinch_t = 0.0
         # Zwei Finger auseinander/zusammen (Touchpad/Touchscreen) = Zoom
         pinch = Gtk.GestureZoom()
         pinch.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        pinch.connect("begin", lambda *_: setattr(self, "_pinch0", self.zoom))
+        pinch.connect("begin", self._pinch_begin)
+        pinch.connect("end", lambda *_: setattr(self, "_pinch_t", GLib.get_monotonic_time()))
+        pinch.connect("cancel", lambda *_: setattr(self, "_pinch_t", GLib.get_monotonic_time()))
         pinch.connect("scale-changed", self._on_pinch)
         self.scroll.add_controller(pinch)
         self._pinch0, self._pinch_id = 1.0, None
@@ -952,15 +956,36 @@ class PdfView(Gtk.Box):
         self.fit = False
         self._apply_zoom(max(0.2, min(z, 6)))
 
+    def _anchor(self):
+        """Bildmitte als (Seite, Anteil in der Seite) – bleibt beim Zoomen an derselben Stelle."""
+        import bisect
+        va = self.scroll.get_vadjustment()
+        mid = va.get_value() + va.get_page_size() / 2
+        offs = self.offsets()
+        i = max(0, bisect.bisect_right(offs, mid) - 1)
+        h = max(1.0, self.sizes[i][1] * self.zoom)
+        return i, max(0.0, min((mid - offs[i]) / h, 1.0))
+
     def _apply_zoom(self, z):
         page = self.current_page()
+        anchor = self._anchor() if self.doc and self.sizes else None
         self.zoom = z
         self.done = {}
         self._gen += 1
         for p, (w, h) in zip(self.pics, self.sizes):
             p.set_size_request(int(w * z), int(h * z))
         self.zoom_lbl.set_label("Breite" if self.fit else f"{round(z * 100)} %")
-        GLib.idle_add(lambda: (self.goto(page, render_only=False), False)[-1])
+        if anchor:
+            GLib.idle_add(self._restore_anchor, *anchor)
+        else:
+            GLib.idle_add(lambda: (self.goto(page, render_only=False), False)[-1])
+
+    def _restore_anchor(self, i, frac):
+        va = self.scroll.get_vadjustment()
+        mid = self.offsets()[i] + frac * self.sizes[i][1] * self.zoom
+        va.set_value(max(0, mid - va.get_page_size() / 2))
+        self.update()
+        return False
 
     # ---------- Position ----------
     def offsets(self):
@@ -2060,6 +2085,10 @@ class PdfView(Gtk.Box):
             return False
         return True
 
+    def _pinch_begin(self, *_):
+        self._pinch0 = self.zoom
+        self._pinch_t = float("inf")
+
     def _on_pinch(self, g, scale):
         target = max(0.2, min(self._pinch0 * scale, 6))
         self._pinch_to = target
@@ -2074,6 +2103,9 @@ class PdfView(Gtk.Box):
         return False
 
     def on_scroll(self, ctrl, dx, dy):
+        # Während (und kurz nach) dem Pinch rutschen Restbewegungen als Scrollen durch → verschlucken
+        if GLib.get_monotonic_time() - self._pinch_t < 300000:
+            return True
         if ctrl.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
             self.set_zoom(self.zoom * (0.9 if dy > 0 else 1.1))
             return True

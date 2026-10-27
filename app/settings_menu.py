@@ -176,6 +176,14 @@ def open_window(app, glass_toggle, cmd="scourge", name="Scourge", bgkey="backgro
         if on is not None:
             c.append(_row("beim anmelden vorladen", "Autostart im Hintergrund (Zeile in der Hyprland-Konfiguration)",
                           _switch(on, lambda v: set_autostart(cmd, v))))
+        if cmd == "scourge":
+            try:
+                import battery
+                if battery.available():
+                    c.append(_row("akku-warnung", "Meldung, wenn der Akku unter 20 % (und unter 10 %) fällt",
+                                  _switch(battery.enabled(), lambda v: put("battery_warn", bool(v)))))
+            except ImportError:
+                pass
         body.append(c)
     else:
         c = ch.Card("verhalten", spacing=10)

@@ -1,5 +1,10 @@
 # scourge – Änderungen
 
+## 2.15.0 (2026-10-27)
+- **Dokumente umwandeln** (neue Kachel auf der Startseite): PDFs zusammenfügen (Reihenfolge per ▲▼, pro PDF ein Seitenbereich wie „1-3, 5, 8-“, Bilder werden eigene Seiten), Seiten behalten/löschen/in Einzelseiten oder n-Seiten-Teile teilen/drehen/umkehren, PDF verkleinern sowie PDF ⇄ Bild (PNG/JPG/WebP, wählbare Auflösung) ⇄ Text ⇄ Word/ODT/HTML/Markdown. Word, Excel und PowerPoint gehen mit LibreOffice, Markdown und EPUB mit pandoc; was fehlt, steht oben auf der Seite. Originale bleiben unverändert.
+- **Akku-Warnung**: Fällt der Akku unter 20 % (und noch einmal unter 10 %), kommt eine Meldung – auch wenn Scourge nur im Hintergrund läuft. Abschaltbar im Zahnrad unter „verhalten“.
+- **PDF-Zoom mit zwei Fingern**: Die Ansicht scrollte beim Zusammen-/Auseinanderziehen weit weg; jetzt bleibt die Bildmitte an ihrer Stelle, und Rest-Scrollbewegungen während der Geste werden ignoriert.
+
 ## 2.14.1 (2026-10-27)
 - **Fenster verschieben (GNOME/KDE/Debian)**: Die Funktion fehlte in der veröffentlichten Fassung ganz; jetzt lässt sich das Fenster am Kopf ziehen, auch auf den Reitern (bei mehreren Reitern: senkrecht ziehen, waagerecht ordnet sie um).
 - **Scrollen**: Im Glas-Modus ruckelte es alle paar Bilder; behoben.
