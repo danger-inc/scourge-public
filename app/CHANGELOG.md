@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.13.0 (2026-10-27)
+- **divist** (neuer Taschenrechner der Suite) ist in der Apps-Leiste, unter software → suite-apps (starten, aktualisieren, Autostart, Icon), im Veröffentlichen-Fenster und bei den Update-Hinweisen eingetragen.
+
 ## 2.12.0 (2026-10-26)
 - **Design wählbar**: In den Einstellungen gibt es die Designauswahl wie in notist (Automatisch + 9 Designs). Die Wahl gilt für alle -ist-Apps zugleich und wirkt sofort. Bei „Automatisch“ (Desktop-Farben) kannst du zwischen **Dunkel** und **Hell** umschalten.
 

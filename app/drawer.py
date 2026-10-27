@@ -23,6 +23,7 @@ APPS = (
     ("mailist", "󰇮", "mailist", "Gmail, leicht löschen"),
     ("sharist", "󰒊", "sharist", "Quick Share mit dem Handy"),
     ("linguist", "󰗊", "linguist", "Übersetzer – Maus in die Ecke"),
+    ("divist", "󰃬", "divist", "Taschenrechner mit Brüchen und Graph"),
     ("inquirist", "󰍉", "inquirist", "Starter: Apps, Fenster, Dateien, Rechner"),
 )
 

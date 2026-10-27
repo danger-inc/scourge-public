@@ -23,6 +23,7 @@ SUITE = {
     "mailist": ("mailist", "mailist.desktop"),
     "sharist": ("sharist", "sharist.desktop"),
     "linguist": ("linguist", "linguist.desktop"),
+    "divist": ("divist", "divist.desktop"),
     "inquirist": ("inquirist", "inquirist.desktop"),
 }
 EXTS = (".svg", ".png")
