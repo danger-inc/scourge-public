@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.14.0 (2026-10-27)
+- **Wechsel-Animation**: Der Wechsel zwischen Hell und Dunkel (und zwischen Designs) läuft als Scanbalken über den ganzen Bildschirm. Alle Fenster, die Leiste und das Terminal wechseln darunter im selben Moment, hinter dem Balken steht das neue Design. An/aus und Dauer (Standard 1,5 s) stehen in der Designauswahl der Einstellungen.
+
 ## 2.13.0 (2026-10-27)
 - **divist** (neuer Taschenrechner der Suite) ist in der Apps-Leiste, unter software → suite-apps (starten, aktualisieren, Autostart, Icon), im Veröffentlichen-Fenster und bei den Update-Hinweisen eingetragen.
 
