@@ -9,6 +9,7 @@ import colorsys
 import json
 import os
 import re
+import time
 
 CONFIG = os.environ.get("IST_THEME_FILE") or os.path.expanduser("~/.config/ist-theme.json")
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
@@ -47,18 +48,81 @@ def exists():
     return os.path.isfile(CONFIG)
 
 
-def save(theme=None, mode=None):
+def save(theme=None, mode=None, at=None):
     st = load()
     if theme is not None:
         st["theme"] = theme
     if mode is not None:
         st["mode"] = mode
+    if at:
+        st["at"] = at     # gemeinsamer Umschaltzeitpunkt (ohne Wechsel-Animation)
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     tmp = CONFIG + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(st, f)
     os.replace(tmp, CONFIG)
     return st
+
+
+# ---------- Wechsel-Animation (Scanbalken) ----------
+SWIPE_FILE = os.path.join(os.path.dirname(CONFIG), "ist-swipe.json")   # eigene Datei: Regler lösen keinen Designwechsel aus
+
+
+def swipe_cfg():
+    cfg = {"on": True, "sec": 1.5}
+    try:
+        with open(SWIPE_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            cfg["on"] = bool(d.get("on", True))
+            cfg["sec"] = min(4.0, max(0.5, float(d.get("sec", 1.5))))
+    except (OSError, ValueError, TypeError):
+        pass
+    return cfg
+
+
+def swipe_set(on=None, sec=None):
+    cfg = swipe_cfg()
+    if on is not None:
+        cfg["on"] = bool(on)
+    if sec is not None:
+        cfg["sec"] = min(4.0, max(0.5, float(sec)))
+    os.makedirs(os.path.dirname(SWIPE_FILE), exist_ok=True)
+    with open(SWIPE_FILE + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+    os.replace(SWIPE_FILE + ".tmp", SWIPE_FILE)
+
+
+def _swipe_script():
+    for d in (os.path.dirname(os.path.abspath(__file__)), os.path.expanduser("~/.local/share/rice-apps")):
+        p = os.path.join(d, "ist-swipe.py")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def switch(theme=None, mode=None):
+    """Design/Modus wechseln – mit Scanbalken-Animation (ist-swipe.py), wenn eingeschaltet und möglich, sonst
+    sofort (alle Fenster zum selben Zeitpunkt). Gibt True zurück, wenn die Animation übernommen hat."""
+    st = load()
+    if (theme is None or theme == st["theme"]) and (mode is None or mode == st["mode"]):
+        return False
+    script = _swipe_script()
+    if swipe_cfg()["on"] and script and os.environ.get("WAYLAND_DISPLAY"):
+        import shutil
+        import subprocess
+        lib = "/usr/lib/libgtk4-layer-shell.so"
+        if shutil.which("grim") and os.path.exists(lib):
+            cmd = ["python3", script] + (["--theme", theme] if theme else []) + (["--mode", mode] if mode else [])
+            env = dict(os.environ, LD_PRELOAD=lib)
+            try:
+                subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+                return True
+            except OSError:
+                pass
+    save(theme, mode, at=time.time() + 0.45)
+    return False
 
 
 # ---------- Farben ----------
@@ -158,6 +222,20 @@ def apply_gtk(light):
         pass
 
 
+SWITCH_PREP = 0.22      # s vor dem Umschaltzeitpunkt wechseln die Apps unter dem Standbild ihre Farben
+
+
+def switch_delay():
+    """Sekunden bis zum gemeinsamen Umschaltzeitpunkt "at" (Epoche) in der Auswahldatei – so wechseln alle
+    Fenster und Leisten im selben Moment. Ohne "at" (oder abgelaufen): 0."""
+    try:
+        with open(CONFIG, encoding="utf-8") as f:
+            at = float(json.load(f).get("at") or 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return 0.0
+    return min(max(at - time.time(), 0.0), 1.0)
+
+
 def watch(callback):
     """Ruft callback() auf, wenn die Auswahl geändert wird (auch von einer anderen App aus). Gibt den Monitor zurück."""
     from gi.repository import Gio, GLib
@@ -165,14 +243,29 @@ def watch(callback):
     mon = Gio.File.new_for_path(os.path.dirname(CONFIG)).monitor_directory(Gio.FileMonitorFlags.NONE, None)
     pending = [0]
 
+    at_ = [0.0]
+
     def fire():
         pending[0] = 0
+        fade = None
+        try:
+            import sys
+            g = sys.modules.get("glass")
+            fade = g.theme_fade_begin() if g and hasattr(g, "theme_fade_begin") else None
+        except Exception:      # noqa: BLE001 – die Überblendung ist Zierde
+            fade = None
         callback()
+        if fade:
+            fade(at_[0])     # das Standbild blendet erst zum gemeinsamen Zeitpunkt aus – bis dahin ist der Wechsel verdeckt
         return False
 
     def changed(_m, f, _o, _ev):
         if f.get_basename() == os.path.basename(CONFIG) and not pending[0]:
-            pending[0] = GLib.timeout_add(120, fire)
+            d = switch_delay()
+            at_[0] = time.time() + d if d > 0 else 0.0
+            # Die Farben werden unter dem Standbild schon VOR dem Zeitpunkt gewechselt (SWITCH_PREP s), damit auch ein
+            # träges Neuladen der Stile (große CSS) nichts mehr verschiebt.
+            pending[0] = GLib.timeout_add(int(max(0.05, d - SWITCH_PREP) * 1000), fire)
     mon.connect("changed", changed)
     return mon
 
@@ -266,6 +359,33 @@ def picker(tr=lambda s: s, on_change=None, columns=5):
     mode.set_visible(st["theme"] == "auto")
     outer.append(mode)
 
+    cfg = swipe_cfg()
+    anim = Gtk.Box(spacing=8, halign=Gtk.Align.START)
+    anim.add_css_class("theme-mode")
+    anim.append(Gtk.Label(label=tr("Wechsel-Animation")))
+    onsw = Gtk.Switch(active=cfg["on"], valign=Gtk.Align.CENTER)
+    anim.append(onsw)
+    dur = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 3.0, 0.1)
+    dur.set_draw_value(False)
+    dur.set_value(cfg["sec"])
+    dur.set_size_request(150, -1)
+    dur.set_sensitive(cfg["on"])
+    durl = Gtk.Label(label=("%.1f s" % cfg["sec"]).replace(".", ","))
+    anim.append(dur)
+    anim.append(durl)
+    outer.append(anim)
+
+    def anim_on(sw, _p):
+        swipe_set(on=sw.get_active())
+        dur.set_sensitive(sw.get_active())
+
+    def anim_dur(sc):
+        v = round(sc.get_value(), 1)
+        durl.set_text(("%.1f s" % v).replace(".", ","))
+        swipe_set(sec=v)
+    onsw.connect("notify::active", anim_on)
+    dur.connect("value-changed", anim_dur)
+
     def changed():
         if on_change:
             on_change()
@@ -273,14 +393,14 @@ def picker(tr=lambda s: s, on_change=None, columns=5):
     for key, b in btns.items():
         def tog(btn, k=key):
             if btn.get_active() and not state["busy"]:
-                save(theme=k)
+                switch(theme=k)
                 mode.set_visible(k == "auto")
                 changed()
         b.connect("toggled", tog)
 
     def mtog(btn, m):
         if btn.get_active() and not state["busy"]:
-            save(mode=m)
+            switch(mode=m)
             changed()
     dark_b.connect("toggled", mtog, "dark")
     light_b.connect("toggled", mtog, "light")

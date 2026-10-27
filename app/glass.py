@@ -253,7 +253,7 @@ import math, time, weakref
 from gi.repository import Gdk
 
 CARET_WIDTH = 2.0          # Breite des Balkens in Pixeln
-CARET_FAST = 0.03         # Zeitkonstante (s) der vorauseilenden Ecken
+CARET_FAST = 0.008        # Zeitkonstante (s) der vorauseilenden Ecken
 CARET_SLOW = 0.10          # … der nachziehenden Ecken (je größer der Abstand, desto dicker der Streifen)
 CARET_IDLE = 0.6           # Ruhe (s) bis zum Blinken
 CARET_BLINK = 0.53         # Halbperiode des Blinkens (s)
@@ -577,6 +577,66 @@ def enable_caret():
         return
     enable_caret.done = True
     GLib.timeout_add(400, _caret_scan)
+
+
+# ---------- Überblendung beim Hell/Dunkel-Wechsel ----------
+FADE_HOLD = 0.0           # s: altes Bild bleibt kurz voll stehen, bis die neuen Farben gezeichnet sind
+FADE_TIME = 0.12          # s: Dauer der Überblendung
+
+
+def theme_fade_begin():
+    """Vor dem Designwechsel aufrufen: legt von jedem Fenster ein Standbild des alten Aussehens darüber.
+    Gibt eine Funktion zurück, die nach dem Wechsel das Standbild ausblendet (None, wenn nichts zu tun ist)."""
+    if os.environ.get("IST_NO_FADE") or Gtk.get_major_version() < 4:
+        return None
+    layers = []
+    for win in Gtk.Window.list_toplevels():
+        try:
+            child = win.get_child()
+            if not isinstance(child, Gtk.Overlay) or not win.get_mapped() or child.get_width() < 2:
+                continue
+            snap = Gtk.WidgetPaintable(widget=child).get_current_image()
+            pic = Gtk.Picture(paintable=snap, can_shrink=True, can_target=False, hexpand=True, vexpand=True)
+            pic.set_content_fit(Gtk.ContentFit.FILL)
+            child.add_overlay(pic)
+            layers.append((child, pic))
+        except Exception as e:      # noqa: BLE001
+            if os.environ.get("IST_FADE_DEBUG"):
+                print("fade:", repr(e), flush=True)
+            continue
+    if os.environ.get("IST_FADE_DEBUG"):
+        print("fade layers:", len(layers), [type(w.get_child()).__name__ for w in Gtk.Window.list_toplevels()], flush=True)
+    if not layers:
+        return None
+
+    def start(at=0.0):
+        """Ausblenden beginnen – zum Zeitpunkt `at` (Epoche), sonst sofort."""
+        t0 = [None]
+        go = [at <= 0]
+
+        def tick(w, clock):
+            if not go[0]:
+                go[0] = time.time() >= at
+                if not go[0]:
+                    return GLib.SOURCE_CONTINUE
+            t = clock.get_frame_time() / 1e6
+            if t0[0] is None:
+                t0[0] = t
+            k = (t - t0[0] - FADE_HOLD) / FADE_TIME
+            if k >= 1:
+                for ov, pic in layers:
+                    try:
+                        ov.remove_overlay(pic)
+                    except Exception:      # noqa: BLE001
+                        pass
+                return GLib.SOURCE_REMOVE
+            k = min(max(k, 0.0), 1.0)
+            op = 1 - (k * k * (3 - 2 * k))
+            for ov, pic in layers:
+                pic.set_opacity(op)
+            return GLib.SOURCE_CONTINUE
+        layers[0][0].add_tick_callback(tick)
+    return start
 
 
 enable_caret()
