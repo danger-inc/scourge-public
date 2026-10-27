@@ -2109,7 +2109,8 @@ class Scourge(Gtk.Application):
         status_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.EXTERNAL,
                                            vscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True)
         status_scroll.set_child(status)
-        root.append(status_scroll)
+        root.append(Gtk.WindowHandle(child=status_scroll))      # GNOME/KDE: hier lässt sich das Fenster ziehen
+        getattr(glass, "make_movable", lambda *a: None)(self.win, self.notebook)
         self.status_scroll = status_scroll
         # schmales Fenster: Tastenhinweise ausblenden (wie bei datist/musicalist)
         self.win.add_tick_callback(lambda w, _c: (self.hints.get_visible() != (w.get_width() >= 980)

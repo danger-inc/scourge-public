@@ -311,7 +311,8 @@ class PdfApp(Gtk.Application):
         sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.EXTERNAL, vscrollbar_policy=Gtk.PolicyType.NEVER,
                                 propagate_natural_height=True)
         sc.set_child(status)
-        root.append(sc)
+        root.append(Gtk.WindowHandle(child=sc))      # GNOME/KDE: hier lässt sich das Fenster ziehen
+        getattr(glass, "make_movable", lambda *a: None)(self.win, self.notebook)
         self.new_tab()
 
     # ---------- Tabs ----------
@@ -337,6 +338,11 @@ class PdfApp(Gtk.Application):
         middle = Gtk.GestureClick(button=2)
         middle.connect("released", lambda *_: self.close_tab(tab))
         box.add_controller(middle)
+        # Rechtsklick / Doppelklick (Doppeltipp) = Tab umbenennen
+        ren = Gtk.GestureClick(button=0)
+        ren.connect("pressed", lambda g, n, x, y: (g.get_current_button() == 3 or (g.get_current_button() == 1 and n == 2))
+                    and (g.set_state(Gtk.EventSequenceState.CLAIMED), self.rename_tab(tab, box)))
+        box.add_controller(ren)
         tab._tab_key, tab._tab_label = key, lbl
         i = self.notebook.append_page(tab, box)
         self.notebook.set_tab_reorderable(tab, True)
@@ -350,10 +356,33 @@ class PdfApp(Gtk.Application):
             t._tab_key.set_label(sup[i] if i < 9 else "")
 
     def update_label(self, tab):
-        tab._tab_label.set_label(tab.title)
-        tab._tab_label.set_tooltip_text(tab.path or tab.title)
+        name = getattr(tab, "custom_title", None) or tab.title
+        tab._tab_label.set_label(name)
+        tab._tab_label.set_tooltip_text(tab.path or name)
         if tab is self.current():
-            self.win.set_title(f"{tab.title} – scourge-pdf")
+            self.win.set_title(f"{name} – scourge-pdf")
+
+    def rename_tab(self, tab, anchor):
+        """Kleines Eingabefeld am Tab; leer lassen = wieder der Dateiname."""
+        pop = Gtk.Popover(has_arrow=True, autohide=True)
+        pop.add_css_class("pdf-pop")
+        pop.add_css_class("formats")
+        pop.set_parent(anchor)
+        ent = Gtk.Entry(text=getattr(tab, "custom_title", None) or tab.title, width_chars=22)
+        ent.add_css_class("pb")
+
+        def done(*_):
+            tab.custom_title = ent.get_text().strip() or None
+            self.update_label(tab)
+            pop.popdown()
+        ent.connect("activate", done)
+        box = Gtk.Box(margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
+        box.append(ent)
+        pop.set_child(box)
+        pop.connect("closed", lambda p: GLib.idle_add(p.unparent))
+        pop.popup()
+        ent.grab_focus()
+        ent.select_region(0, -1)
 
     def open_path(self, path, tab=None):
         if not path or not os.path.exists(path):

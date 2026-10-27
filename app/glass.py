@@ -367,6 +367,19 @@ class CaretTrail(Gtk.DrawingArea):
                 except TypeError:
                     pass
 
+    def _follow_on(self):
+        """Solange ein Feld den Fokus hat, jedes Bild (statt alle 40 ms) abfragen – der Cursor hinkt sonst beim Moduswechsel."""
+        if not getattr(self, "_following", False):
+            self._following = True
+            self.add_tick_callback(self._follow)
+
+    def _follow(self, *_):
+        if self._widget is None or not self._poll_id:
+            self._following = False
+            return GLib.SOURCE_REMOVE
+        self._poll()
+        return GLib.SOURCE_CONTINUE
+
     def _kick(self):
         if self._poll_id:
             self._poll()
@@ -399,6 +412,7 @@ class CaretTrail(Gtk.DrawingArea):
             w.add_css_class("ist-caret")
             self._widget = weakref.ref(w)
             self._watch(w)
+            self._follow_on()
             self._cur = self._tgt = None        # anderes Feld: kein Streifen quer über das Fenster, sondern neu erscheinen
         r = _caret_rect(w)
         host = r[0] if r else w

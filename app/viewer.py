@@ -4,13 +4,15 @@
 # Anmerkungen sind echte PDF-Anmerkungen (Poppler) – andere PDF-Programme zeigen und bearbeiten sie weiter.
 # Seiten werden erst gerendert, wenn sie ins Bild scrollen (auch dicke PDFs bleiben flüssig).
 import ctypes
+import threading
 import os
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+gi.require_version("Graphene", "1.0")
+from gi.repository import Gdk, Gio, GLib, Graphene, Gtk, Pango, PangoCairo
 
 try:
     import glass
@@ -18,13 +20,15 @@ except ImportError:      # ohne Cursor-Ebene zeichnet der Direkt-Text seinen Cur
     glass = None
 
 VIEWER_CSS = """
-.pdf-bg { background-color: alpha(black, 0.18); border-radius: 10px; }
-.pdf-page { background-color: white; box-shadow: 0 2px 10px alpha(black, 0.45); }
+/* deckend: Hyprland rechnet den Glas-Blur nur für durchsichtige Flächen – eine durchsichtige Lesefläche kostete beim
+   Scrollen ~5 ms je Bild (gemessen: 23 → 18 ms) */
+scrolledwindow.pdf-bg { background-color: mix(@background, black, 0.22); border-radius: 10px; }
+.pdf-page { background-color: white; box-shadow: 0 0 0 1px alpha(black, 0.35), 0 2px 0 1px alpha(black, 0.25); }
 .pdf-bar { margin-bottom: 6px; }
 .pdf-bar entry.pb { min-height: 24px; }
 .pdf-tools { margin-bottom: 6px; }
 .pdf-tools > flowboxchild { padding: 0; background: none; }
-.pdf-tools button.pb.ptool { padding: 1px 7px; font-size: 14px; }
+.pdf-tools button.pb.ptool { padding: 1px 6px; font-size: 14px; min-height: 0; min-width: 24px; }
 .pdf-tools .tool-name { font-size: 12px; color: @secondary; }
 .pdf-tools button.pcolor { padding: 2px; min-width: 0; min-height: 0; border-radius: 4px; background: none;
     border: 1px solid transparent; box-shadow: none; }
@@ -328,6 +332,32 @@ def _swatch(hexcol, size=14):
     return da
 
 
+class PageWidget(Gtk.Widget):
+    """Eine Seite: Textur und Anmerkungs-Ebene in EINEM Widget (Picture + Overlay + DrawingArea pro Seite
+    kostete beim Scrollen ~10 ms je Bild)."""
+    __gtype_name__ = "ScourgePageWidget"
+
+    def __init__(self, draw, active, i):
+        super().__init__()
+        self._active = active
+        self.add_css_class("pdf-page")
+        self._draw, self._i, self._tex = draw, i, None
+
+    def set_paintable(self, tex):
+        self._tex = tex
+        self.queue_draw()
+
+    def do_snapshot(self, snap):
+        w, h = self.get_width(), self.get_height()
+        snap.render_background(self.get_style_context(), 0, 0, w, h)
+        if self._tex is not None:
+            snap.append_texture(self._tex, Graphene.Rect().init(0, 0, w, h))
+        if not self._active(self._i):      # leere Cairo-Ebene pro Seite kostete beim Scrollen ~6 ms je Bild
+            return
+        cr = snap.append_cairo(Graphene.Rect().init(0, 0, w, h))
+        self._draw(self, cr, w, h, self._i)
+
+
 class PdfView(Gtk.Box):
     def __init__(self, editable=False, notify=None, on_saved=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -342,6 +372,10 @@ class PdfView(Gtk.Box):
         self.page_objs = {}
         self.layouts = {}       # Seite -> (Text, Zeichen-Rechtecke) für Auswahl und Markieren
         self.done = {}          # Seite -> Zoom, mit dem sie gerendert ist
+        self._gen = 0           # zählt hoch, wenn fertige Renderings veralten (Zoom, Suche, neues Dokument)
+        self._doc_id = 0
+        self._jobs, self._inflight, self._wlock = [], {}, threading.Condition()
+        self._worker = None
         self.hits = []          # [(Seite, (x1, y1, x2, y2))] in Seitenkoordinaten (oben links)
         self.hit_i = -1
         self.tool = "select"
@@ -862,20 +896,19 @@ class PdfView(Gtk.Box):
         while (c := self.pages.get_first_child()):
             self.pages.remove(c)
         self.pics, self.areas, self.done, self.hits, self.hit_i = [], [], {}, [], -1
+        self._gen += 1
+        self._doc_id += 1
+        self._async_failed = False
         self.page_objs, self.layouts = {}, {}
         self.sel = self.live = self.hover = None
         self.undo_stack, self.redo_stack = [], []
         self._refs = {}
         self.dirty = False
+        self._off_key = None
         self.sizes = [doc.get_page(i).get_size() for i in range(doc.get_n_pages())]
         for i, _ in enumerate(self.sizes):
-            ov = Gtk.Overlay()
-            p = Gtk.Picture(content_fit=Gtk.ContentFit.FILL, can_shrink=True)
-            p.add_css_class("pdf-page")
-            ov.set_child(p)
-            da = Gtk.DrawingArea()
-            da.set_draw_func(self._draw_overlay, i)
-            ov.add_overlay(da)
+            da = PageWidget(self._draw_overlay, self._overlay_active, i)
+            p = ov = da
             drag = Gtk.GestureDrag()
             drag.connect("drag-begin", self._drag_begin, i)
             drag.connect("drag-update", self._drag_update, i)
@@ -887,7 +920,7 @@ class PdfView(Gtk.Box):
             da.add_controller(motion)
             self.pics.append(p)
             self.areas.append(da)
-            self.pages.append(ov)
+            self.pages.append(da)
         self.set_tool(self.tool)
         self.search.set_text("")
         self.hit_lbl.set_label("")
@@ -923,6 +956,7 @@ class PdfView(Gtk.Box):
         page = self.current_page()
         self.zoom = z
         self.done = {}
+        self._gen += 1
         for p, (w, h) in zip(self.pics, self.sizes):
             p.set_size_request(int(w * z), int(h * z))
         self.zoom_lbl.set_label("Breite" if self.fit else f"{round(z * 100)} %")
@@ -930,6 +964,14 @@ class PdfView(Gtk.Box):
 
     # ---------- Position ----------
     def offsets(self):
+        key = (self.zoom, id(self.sizes), len(self.sizes))
+        if getattr(self, "_off_key", None) == key:
+            return self._off_val
+        out = self._offsets()
+        self._off_key, self._off_val = key, out
+        return out
+
+    def _offsets(self):
         y, out = GAP, []
         for w, h in self.sizes:
             out.append(y)
@@ -939,9 +981,9 @@ class PdfView(Gtk.Box):
     def current_page(self):
         if not self.doc:
             return 0
+        import bisect
         mid = self.scroll.get_vadjustment().get_value() + self.scroll.get_height() / 3
-        offs = self.offsets()
-        return max(0, sum(1 for o in offs if o <= mid) - 1)
+        return max(0, bisect.bisect_right(self.offsets(), mid) - 1)
 
     def ask_page(self):
         """Kleines Feld unter der Seitenzahl: Nummer eintippen, Enter springt hin."""
@@ -993,21 +1035,122 @@ class PdfView(Gtk.Box):
         va = self.scroll.get_vadjustment()
         top, bottom = va.get_value(), va.get_value() + max(va.get_page_size(), 400)
         offs = self.offsets()
-        scale = self.zoom * self.get_scale_factor()
+        mid = (top + bottom) / 2
+        want = []
         for i, o in enumerate(offs):
             h = self.sizes[i][1] * self.zoom
-            if o + h >= top - h and o <= bottom + h:  # sichtbar oder direkt daneben
-                if self.done.get(i) != self.zoom:
-                    marks = [r for p, r in self.hits if p == i]
-                    cur = None
-                    if 0 <= self.hit_i < len(self.hits) and self.hits[self.hit_i][0] == i:
-                        cur = marks.index(self.hits[self.hit_i][1])
-                    self.pics[i].set_paintable(render(self.page(i), scale, marks, cur))
-                    self.done[i] = self.zoom
+            m = max(2 * h, bottom - top)
+            if o + h >= top - m and o <= bottom + m and self.done.get(i) != self.zoom:  # sichtbar oder in der Nähe
+                vis = o + h >= top and o <= bottom
+                want.append((0 if vis else 1, abs(o + h / 2 - mid), i))
+        want.sort()
+        if self._async_ok():
+            self._request([i for _v, _d, i in want])
+        else:
+            # sichtbare Seiten sofort, Nachbarn einzeln im Leerlauf (sonst ruckelt das Scrollen bei mehreren neuen Seiten)
+            for vis, _d, i in want:
+                if vis == 0:
+                    self._render_page(i)
+            if any(v == 1 for v, _d, _i in want) and not getattr(self, "_idle_render", None):
+                self._idle_render = GLib.idle_add(self._render_next, priority=GLib.PRIORITY_LOW)
         cur = self.current_page()
-        self.page_lbl.set_label(f"Seite {cur + 1} / {len(self.sizes)}")
-        self.prev.set_sensitive(cur > 0)
-        self.next.set_sensitive(cur < len(self.sizes) - 1)
+        if getattr(self, "_cur_shown", None) != (cur, len(self.sizes)):
+            self._cur_shown = (cur, len(self.sizes))
+            self.page_lbl.set_label(f"Seite {cur + 1} / {len(self.sizes)}")
+            self.prev.set_sensitive(cur > 0)
+            self.next.set_sensitive(cur < len(self.sizes) - 1)
+
+    # ---------- Rendern im Hintergrund ----------
+    # Poppler rechnet eine Seite in ~30 ms – im Hauptthread war jede neue Seite ein verlorenes Bild. Der Arbeiter hat ein
+    # EIGENES Dokument (Poppler ist pro Dokument nicht thread-sicher). Sobald das Dokument verändert wurde (Anmerkungen,
+    # Rückgängig), zeigt nur das Hauptdokument den aktuellen Stand → dann wieder synchron.
+    def _px_scale(self):
+        """Bildschirmpixel je Layout-Pixel (auch gebrochen, z. B. 1,5) – bei 2 statt 1,5 wären die Texturen 78 % größer."""
+        try:
+            return max(1.0, self.get_native().get_surface().get_scale())
+        except (AttributeError, TypeError):
+            return float(self.get_scale_factor())
+
+    def _async_ok(self):
+        return bool(self.path and not self._async_failed and not self.dirty and not self.undo_stack
+                    and not self.redo_stack and not self.edit and os.path.exists(self.path))
+
+    def _request(self, order):
+        scale = self.zoom * self._px_scale()
+        jobs = []
+        with self._wlock:
+            for i in order:
+                if self._inflight.get(i) == (self._gen, self.zoom):
+                    continue
+                marks = [r for p, r in self.hits if p == i]
+                cur = None
+                if 0 <= self.hit_i < len(self.hits) and self.hits[self.hit_i][0] == i:
+                    cur = marks.index(self.hits[self.hit_i][1])
+                jobs.append((self._gen, self._doc_id, self.path, i, self.zoom, scale, marks, cur))
+            self._jobs = jobs
+            self._wlock.notify()
+        if jobs and self._worker is None:
+            self._worker = threading.Thread(target=self._work, daemon=True)
+            self._worker.start()
+
+    def _work(self):
+        wdoc, wkey, wpages = None, None, {}
+        while True:
+            with self._wlock:
+                while not self._jobs:
+                    self._wlock.wait()
+                gen, did, path, i, zoom, scale, marks, cur = self._jobs.pop(0)
+                self._inflight[i] = (gen, zoom)
+            tex = None
+            try:
+                if wkey != (did, path):
+                    wdoc = _poppler().Document.new_from_file(GLib.filename_to_uri(os.path.abspath(path)), None)
+                    wkey, wpages = (did, path), {}
+                if i not in wpages:
+                    wpages[i] = wdoc.get_page(i)
+                tex = render(wpages[i], scale, marks, cur)
+            except Exception:
+                wkey = None
+            GLib.idle_add(self._got, gen, did, i, zoom, tex)
+
+    def _got(self, gen, did, i, zoom, tex):
+        with self._wlock:
+            self._inflight.pop(i, None)
+        if tex is None:
+            self._async_failed = True                 # z. B. Passwort-PDF: Hauptdokument rendert synchron
+            self.update()
+        elif did == self._doc_id and gen == self._gen and zoom == self.zoom and i < len(self.pics):
+            self.pics[i].set_paintable(tex)
+            self.done[i] = zoom
+        return False
+
+    def _render_page(self, i):
+        scale = self.zoom * self._px_scale()
+        marks = [r for p, r in self.hits if p == i]
+        cur = None
+        if 0 <= self.hit_i < len(self.hits) and self.hits[self.hit_i][0] == i:
+            cur = marks.index(self.hits[self.hit_i][1])
+        self.pics[i].set_paintable(render(self.page(i), scale, marks, cur))
+        self.done[i] = self.zoom
+
+    def _render_next(self):
+        self._idle_render = None
+        if not self.doc:
+            return False
+        va = self.scroll.get_vadjustment()
+        top, bottom = va.get_value(), va.get_value() + max(va.get_page_size(), 400)
+        mid = (top + bottom) / 2
+        offs = self.offsets()
+        near = sorted((abs(offs[i] + self.sizes[i][1] * self.zoom / 2 - mid), i) for i in range(len(offs)))
+        for _d, i in near:
+            o = offs[i]
+            h = self.sizes[i][1] * self.zoom
+            m = max(2 * h, bottom - top)
+            if o + h >= top - m and o <= bottom + m and self.done.get(i) != self.zoom:
+                self._render_page(i)
+                self._idle_render = GLib.idle_add(self._render_next, priority=GLib.PRIORITY_LOW)
+                break
+        return False
 
     def _rerender(self, i):
         self.done.pop(i, None)
@@ -1027,6 +1170,7 @@ class PdfView(Gtk.Box):
                 for r in self.page(i).find_text(text) or []:
                     self.hits.append((i, (r.x1, h - max(r.y1, r.y2), r.x2, h - min(r.y1, r.y2))))  # unten-links -> oben-links
         self.done = {}
+        self._gen += 1
         if self.hits:
             self.step_hit(1)
         else:
@@ -1040,6 +1184,7 @@ class PdfView(Gtk.Box):
         self.hit_lbl.set_label(f"{self.hit_i + 1} / {len(self.hits)}")
         page, (x1, y1, x2, y2) = self.hits[self.hit_i]
         self.done = {}
+        self._gen += 1
         self.goto(page, y_in_page=max(0, y1 - 120))
 
     # ---------- Text auf der Seite ----------
@@ -1817,6 +1962,13 @@ class PdfView(Gtk.Box):
         return False
 
     # ---------- Zeichnen über der Seite ----------
+    def _overlay_active(self, i):
+        """Hat Seite i gerade etwas über der Textur zu zeichnen? (Auswahl, Live-Strich, Text, Hover)"""
+        rng = self.sel_range()
+        return bool((rng and rng[0] == i) or (self.live and self.live[0] == i) or (self.edit and self.edit["i"] == i)
+                    or (self.ghost and self.ghost[0] == i and self.tool == "text")
+                    or (self.hover and self.hover[0] == i))
+
     def _draw_overlay(self, area, cr, w, h, i):
         z = self.zoom
         pr, pg, pb = 0.24, 0.52, 1.0
@@ -1865,7 +2017,14 @@ class PdfView(Gtk.Box):
             return True
         focus = self.get_root().get_focus() if self.get_root() else None
         typing = isinstance(focus, Gtk.Text) or isinstance(focus, Gtk.TextView)
-        if k in ("Page_Down", "Next"):
+        if not typing and not c and k in ("Left", "Right") and not (mods & Gdk.ModifierType.ALT_MASK):
+            self.goto(self.current_page() + (1 if k == "Right" else -1))
+        elif not typing and not c and k in ("Up", "Down"):
+            va = self.scroll.get_vadjustment()
+            step = 80 * (5 if s else 1)
+            va.set_value(max(va.get_lower(), min(va.get_value() + (step if k == "Down" else -step),
+                                                 va.get_upper() - va.get_page_size())))
+        elif k in ("Page_Down", "Next"):
             self.goto(self.current_page() + 1)
         elif k in ("Page_Up", "Prior"):
             self.goto(self.current_page() - 1)
