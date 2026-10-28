@@ -294,6 +294,16 @@ class GlassToggle(Gtk.ToggleButton):
 # Abschalten: Umgebungsvariable IST_NO_CARET=1.
 import math, time, weakref
 
+
+def _eco():
+    """Energy-saving mode (istheme.eco): animations off."""
+    try:
+        import istheme
+        return istheme.eco()
+    except Exception:      # noqa: BLE001
+        return False
+
+
 from gi.repository import Gdk
 
 CARET_WIDTH = 2.0          # Breite des Balkens in Pixeln
@@ -576,6 +586,13 @@ class CaretTrail(Gtk.Widget if _CARET_PATH else Gtk.DrawingArea):
             return GLib.SOURCE_REMOVE
         x, y, h = self._tgt
         goal = [(x, y), (x + CARET_WIDTH, y), (x + CARET_WIDTH, y + h), (x, y + h)]
+        if _eco():             # energy-saving mode: caret jumps instead of gliding
+            self._cur = [list(g) for g in goal]
+            self._on = True
+            self._moved = time.monotonic()
+            self.queue_draw()
+            self._ticking = False
+            return GLib.SOURCE_REMOVE
         f = max(caret_cfg()[1], 0.05)
         cx, cy = x + CARET_WIDTH / 2, y + h / 2
         far = 0.0

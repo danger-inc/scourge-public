@@ -12,6 +12,15 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, GLib, Graphene, Gtk, Pango, PangoCairo
 
+
+def _eco():
+    """Energy-saving mode (istheme.eco): animations off."""
+    try:
+        import istheme
+        return istheme.eco()
+    except Exception:      # noqa: BLE001
+        return False
+
 CSS = """
 label.swipe-acc { color: @primary; }
 label.swipe-on { color: @on_primary; }
@@ -351,6 +360,12 @@ class SwipeBack:
 
     # ---------- Animationen ----------
     def _run(self, dur, step, done):
+        if _eco():                           # energy-saving mode: jump to the end state
+            step(1.0)
+            self._anim = None
+            done()
+            self.bin.queue_draw()
+            return
         t0 = [None]
 
         def tick(widget, clock):

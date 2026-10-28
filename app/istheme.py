@@ -93,6 +93,119 @@ def swipe_set(on=None, sec=None):
     os.replace(SWIPE_FILE + ".tmp", SWIPE_FILE)
 
 
+# ---------- energy-saving mode (shared by all apps + waybar) ----------
+ECO_FILE = os.path.join(os.path.dirname(CONFIG), "ist-eco.json")      # {"on": bool, "prev": "balanced"}
+ECO_SIGNAL = "RTMIN+9"                                                # waybar module custom/eco
+_eco = {"t": -10.0, "on": False}
+
+
+def eco():
+    """True while the energy-saving mode is on. Cheap enough for animation ticks (one file read per second)."""
+    now = time.monotonic()
+    if now - _eco["t"] >= 1.0:
+        _eco["t"] = now
+        try:
+            with open(ECO_FILE, encoding="utf-8") as f:
+                _eco["on"] = bool(json.load(f).get("on"))
+        except (OSError, ValueError, AttributeError):
+            _eco["on"] = False
+    return _eco["on"]
+
+
+def _run(*cmd):
+    import subprocess
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def eco_set(on):
+    """Switch the mode: power profile power-saver (and back), compositor animations/blur off, waybar icon."""
+    on = bool(on)
+    try:
+        with open(ECO_FILE, encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    if bool(st.get("on")) == on and os.path.exists(ECO_FILE):
+        return on
+    import shutil
+    if st.get("profile", True) and shutil.which("powerprofilesctl"):
+        if on:
+            cur = _run("powerprofilesctl", "get")
+            if cur and cur != "power-saver":
+                st["prev"] = cur
+            _run("powerprofilesctl", "set", "power-saver")
+        else:
+            _run("powerprofilesctl", "set", st.get("prev") or "balanced")
+    if st.get("hypr", True) and shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        v = "false" if on else "true"       # Lua config: no "keyword"; a reload (colors, hyprctl reload) restores them
+        _run("hyprctl", "eval", "hl.config({animations={enabled=%s},decoration={blur={enabled=%s}}})" % (v, v))
+    st["on"] = on
+    os.makedirs(os.path.dirname(ECO_FILE), exist_ok=True)
+    with open(ECO_FILE + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(st, f)
+    os.replace(ECO_FILE + ".tmp", ECO_FILE)
+    _eco.update(t=time.monotonic(), on=on)
+    _run("pkill", "-" + ECO_SIGNAL, "-x", "waybar")
+    return on
+
+
+def eco_option(key, value):
+    """Option of the mode (waybar menu): "profile" (power profile power-saver), "hypr" (compositor animations/blur
+    off), "auto_at" (switch on at this battery percentage, 0 = never). Applies right away if the mode is on."""
+    was = eco()
+    if was and key in ("profile", "hypr"):
+        eco_set(False)
+    try:
+        with open(ECO_FILE, encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    st[key] = value
+    os.makedirs(os.path.dirname(ECO_FILE), exist_ok=True)
+    with open(ECO_FILE + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(st, f)
+    os.replace(ECO_FILE + ".tmp", ECO_FILE)
+    _eco["t"] = -10.0
+    if was and key in ("profile", "hypr"):
+        eco_set(True)
+
+
+def eco_cfg():
+    try:
+        with open(ECO_FILE, encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    return {"on": bool(st.get("on")), "profile": st.get("profile", True), "hypr": st.get("hypr", True),
+            "auto_at": int(st.get("auto_at", 0)), "armed": st.get("armed", True)}
+
+
+def eco_auto():
+    """Called regularly by waybar: switch the mode on at the chosen battery percentage (once per discharge)
+    and, while it is on, switch the compositor animations off again after a config reload."""
+    cfg = eco_cfg()
+    if cfg["on"] and cfg["hypr"] and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        if '"bool": true' in _run("hyprctl", "getoption", "-j", "animations:enabled"):
+            _run("hyprctl", "eval", "hl.config({animations={enabled=false},decoration={blur={enabled=false}}})")
+    try:
+        bat = "/sys/class/power_supply/BAT0/"
+        with open(bat + "capacity") as f:
+            pct = int(f.read())
+        with open(bat + "status") as f:
+            status = f.read().strip()
+    except (OSError, ValueError):
+        return
+    if status in ("Charging", "Full"):
+        if not cfg["armed"]:
+            eco_option("armed", True)
+    elif cfg["auto_at"] and pct <= cfg["auto_at"] and cfg["armed"] and not cfg["on"]:
+        eco_option("armed", False)
+        eco_set(True)
+
+
 def _swipe_script():
     for d in (os.path.dirname(os.path.abspath(__file__)), os.path.expanduser("~/.local/share/rice-apps")):
         p = os.path.join(d, "ist-swipe.py")
@@ -108,7 +221,7 @@ def switch(theme=None, mode=None):
     if (theme is None or theme == st["theme"]) and (mode is None or mode == st["mode"]):
         return False
     script = _swipe_script()
-    if swipe_cfg()["on"] and script and os.environ.get("WAYLAND_DISPLAY"):
+    if swipe_cfg()["on"] and not eco() and script and os.environ.get("WAYLAND_DISPLAY"):
         import shutil
         import subprocess
         lib = "/usr/lib/libgtk4-layer-shell.so"
@@ -287,6 +400,12 @@ button.theme-card:checked { border-color: @primary; background-color: alpha(@pri
     border: 1px solid alpha(@primary, 0.25); border-radius: 6px; padding: 3px 12px; }
 .theme-mode button:hover { border-color: alpha(@primary, 0.7); }
 .theme-mode button:checked { border-color: @primary; background-color: alpha(@primary, 0.18); }
+.theme-mode button.ist-check { border: none; background: none; padding: 0 2px; min-height: 0; }
+button.ist-check { font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace; }
+button.ist-check label { font-weight: normal; }
+button.ist-check:hover label { color: @primary; }
+button.ist-check label.on { color: @primary; }
+label.ist-dim { opacity: 0.6; }
 """
 _picker_provider = None
 
@@ -319,6 +438,105 @@ def _swatch(cols):
         cr.fill()
     sw.set_draw_func(draw)
     return sw
+
+
+def check(text, active=False, callback=None):
+    """[■] text / [ ] text – toggle in the suite style (same look as tui.Check, but without the tui dependency)."""
+    from gi.repository import Gtk
+    b = Gtk.Button(valign=Gtk.Align.CENTER)
+    b.add_css_class("ist-check")
+    box = Gtk.Label(label="[ ]")
+    txt = Gtk.Label(label=text)
+    row = Gtk.Box(spacing=6)
+    row.append(box)
+    row.append(txt)
+    b.set_child(row)
+    b.active = None
+
+    def set_active(on):
+        on = bool(on)
+        if on != b.active:
+            b.active = on
+            box.set_label("[■]" if on else "[ ]")
+            (box.add_css_class if on else box.remove_css_class)("on")
+    b.set_active = set_active
+
+    def clicked(*_):
+        set_active(not b.active)
+        if callback:
+            callback(b.active)
+    b.connect("clicked", clicked)
+    set_active(active)
+    return b
+
+
+def cells(values, value, callback=None):
+    """■■■■■···· – slider of cells in the suite style (like tui.Meter): click / drag / arrow keys / scroll.
+    values = list of selectable values; callback(value). Returns the widget (.set_value(v), .set_enabled(bool))."""
+    from gi.repository import Gdk, Gtk
+    n = len(values)
+    st = {"i": min(range(n), key=lambda k: abs(values[k] - value)), "on": True}
+    area = Gtk.DrawingArea(content_width=n * 14, content_height=18, valign=Gtk.Align.CENTER, focusable=True)
+    area.set_cursor(Gdk.Cursor.new_from_name("pointer"))
+
+    def col(name, fallback):
+        ok, c = area.get_style_context().lookup_color(name)
+        return c if ok else fallback
+
+    def draw(_a, cr, w, h):
+        fg = area.get_color()
+        acc = col("primary", fg)
+        size = 8
+        y = (h - size) / 2
+        for k in range(n):
+            if k <= st["i"]:
+                cr.set_source_rgba(acc.red, acc.green, acc.blue, 1.0 if st["on"] else 0.35)
+            else:
+                cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.14)
+            cr.rectangle(k * 14 + 3, y, size, size)
+            cr.fill()
+        if st["on"] and area.has_focus():
+            cr.set_source_rgba(acc.red, acc.green, acc.blue, 0.8)
+            cr.rectangle(0, h - 1, n * 14, 1)
+            cr.fill()
+    area.set_draw_func(draw)
+
+    def pick(k):
+        k = max(0, min(n - 1, k))
+        if st["on"] and k != st["i"]:
+            st["i"] = k
+            area.queue_draw()
+            if callback:
+                callback(values[k])
+
+    drag = Gtk.GestureDrag()
+    drag.connect("drag-begin", lambda g, x, y: (area.grab_focus(), pick(int(x // 14))))
+    drag.connect("drag-update", lambda g, dx, dy: pick(int((g.get_start_point()[1] + dx) // 14)))
+    area.add_controller(drag)
+    keys = Gtk.EventControllerKey()
+
+    def key(_c, kv, _code, _state):
+        d = {Gdk.KEY_Left: -1, Gdk.KEY_Right: 1, Gdk.KEY_Home: -n, Gdk.KEY_End: n}.get(kv)
+        if d is None:
+            return False
+        pick(st["i"] + d)
+        return True
+    keys.connect("key-pressed", key)
+    area.add_controller(keys)
+    scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+    scroll.connect("scroll", lambda c, dx, dy: pick(st["i"] - (1 if dy > 0 else -1)) or True)
+    area.add_controller(scroll)
+    focus = Gtk.EventControllerFocus()
+    focus.connect("enter", lambda *_: area.queue_draw())
+    focus.connect("leave", lambda *_: area.queue_draw())
+    area.add_controller(focus)
+
+    def set_enabled(on):
+        st["on"] = bool(on)
+        area.set_opacity(1.0 if on else 0.6)
+        area.queue_draw()
+    area.set_enabled = set_enabled
+    return area
 
 
 def picker(tr=lambda s: s, on_change=None, columns=5):
@@ -365,31 +583,26 @@ def picker(tr=lambda s: s, on_change=None, columns=5):
     outer.append(mode)
 
     cfg = swipe_cfg()
-    anim = Gtk.Box(spacing=8, halign=Gtk.Align.START)
+    secs = [0.5 + 0.25 * k for k in range(11)]       # 0,5 … 3,0 s
+    fmt = lambda v: ("%.2f" % v).rstrip("0").rstrip(".").replace(".", ",") + " s"
+    anim = Gtk.Box(spacing=10, halign=Gtk.Align.START)
     anim.add_css_class("theme-mode")
-    anim.append(Gtk.Label(label=tr("Wechsel-Animation")))
-    onsw = Gtk.Switch(active=cfg["on"], valign=Gtk.Align.CENTER)
+    durl = Gtk.Label(label=fmt(cfg["sec"]), xalign=0, width_chars=6)
+    dur = cells(secs, cfg["sec"], lambda v: (durl.set_text(fmt(v)), swipe_set(sec=v)))
+    dur.set_enabled(cfg["on"])
+    onsw = check(tr("Wechsel-Animation"), cfg["on"], lambda on: (swipe_set(on=on), dur.set_enabled(on)))
     anim.append(onsw)
-    dur = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 3.0, 0.1)
-    dur.set_draw_value(False)
-    dur.set_value(cfg["sec"])
-    dur.set_size_request(150, -1)
-    dur.set_sensitive(cfg["on"])
-    durl = Gtk.Label(label=("%.1f s" % cfg["sec"]).replace(".", ","))
     anim.append(dur)
     anim.append(durl)
     outer.append(anim)
 
-    def anim_on(sw, _p):
-        swipe_set(on=sw.get_active())
-        dur.set_sensitive(sw.get_active())
-
-    def anim_dur(sc):
-        v = round(sc.get_value(), 1)
-        durl.set_text(("%.1f s" % v).replace(".", ","))
-        swipe_set(sec=v)
-    onsw.connect("notify::active", anim_on)
-    dur.connect("value-changed", anim_dur)
+    eco_row = Gtk.Box(spacing=10, halign=Gtk.Align.START)
+    eco_row.add_css_class("theme-mode")
+    eco_row.append(check(tr("Energiesparmodus"), eco(), lambda on: eco_set(on)))
+    hint = Gtk.Label(label=tr("weniger Animationen, Energieprofil „Stromsparen“"), xalign=0)
+    hint.add_css_class("ist-dim")
+    eco_row.append(hint)
+    outer.append(eco_row)
 
     def changed():
         if on_change:
@@ -410,3 +623,23 @@ def picker(tr=lambda s: s, on_change=None, columns=5):
     dark_b.connect("toggled", mtog, "dark")
     light_b.connect("toggled", mtog, "light")
     return outer
+
+
+if __name__ == "__main__":      # istheme.py eco [on|off|toggle|status]  (used by waybar)
+    import sys
+    if len(sys.argv) >= 2 and sys.argv[1] == "eco":
+        arg = sys.argv[2] if len(sys.argv) > 2 else "status"
+        _eco["t"] = -10.0
+        if arg == "toggle":
+            eco_set(not eco())
+        elif arg in ("on", "off"):
+            eco_set(arg == "on")
+        elif arg == "auto":
+            eco_auto()
+        elif arg == "option" and len(sys.argv) == 5:
+            v = sys.argv[4]
+            eco_option(sys.argv[3], int(v) if v.isdigit() else v == "true")
+        elif arg == "json":
+            print(json.dumps(eco_cfg()))
+            sys.exit(0)
+        print("on" if eco() else "off")
