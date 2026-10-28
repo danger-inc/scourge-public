@@ -12,6 +12,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 OUT_DIR = os.path.expanduser("~/Videos/Aufnahmen")
+DEFAULT_OUT = OUT_DIR
 PREFS = os.path.expanduser("~/.config/scourge/recorder.json")
 COUNTDOWNS = (("aus", 0), ("3 s", 3), ("5 s", 5), ("10 s", 10))
 STOP_AFTER = (("nie", 0), ("1 min", 60), ("5 min", 300), ("10 min", 600), ("30 min", 1800), ("1 Stunde", 3600))
@@ -37,7 +38,20 @@ def desktop_note(text, urgent=False):
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def open_folder(win, path=OUT_DIR):
+def out_dir():
+    """Aufnahme-Ordner: Einstellung (Zahnrad → ordner) oder ~/Videos/Aufnahmen."""
+    try:
+        import settings_menu
+        d = settings_menu.get("rec_dir")
+        if d and OUT_DIR == DEFAULT_OUT:
+            return os.path.expanduser(d)
+    except Exception:
+        pass
+    return OUT_DIR
+
+
+def open_folder(win, path=None):
+    path = path or out_dir()
     os.makedirs(path, exist_ok=True)
     Gtk.FileLauncher(file=Gio.File.new_for_path(path)).launch(win, None, None)
 
@@ -200,12 +214,12 @@ class RecorderPage(Gtk.ScrolledWindow):
         self.start_btn.add_css_class("pb")
         self.start_btn.connect("clicked", lambda *_: self.prepare())
         row.append(self.start_btn)
-        folder = Gtk.Button(label="󰉋  Aufnahme-Ordner öffnen", tooltip_text=OUT_DIR)
+        folder = Gtk.Button(label="󰉋  Aufnahme-Ordner öffnen", tooltip_text=out_dir())
         folder.add_css_class("pb")
         folder.connect("clicked", lambda *_: open_folder(self.tab.win))
         row.append(folder)
         c.append(row)
-        hint = Gtk.Label(label="Stoppen: Super+Umschalt+R oder der Knopf hier. Die Aufnahme landet in ~/Videos/Aufnahmen "
+        hint = Gtk.Label(label="Stoppen: Super+Umschalt+R oder der Knopf hier. Die Aufnahme landet im Aufnahme-Ordner (Zahnrad → ordner) "
                                "und öffnet sich danach direkt im Schnitt.", xalign=0, wrap=True)
         hint.add_css_class("note")
         c.append(hint)
@@ -235,14 +249,13 @@ class RecorderPage(Gtk.ScrolledWindow):
 
     def build_missing(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        c = self.card(box, "Aufnahme-Programm fehlt")
-        t = Gtk.Label(label="Für Bildschirmaufnahmen unter Hyprland braucht Scourge das kleine Programm wf-recorder. "
-                            "Einmal in einem Terminal installieren:", xalign=0, wrap=True)
-        t.add_css_class("note")
-        c.append(t)
-        cmd = Gtk.Label(label="sudo pacman -S wf-recorder", xalign=0, selectable=True)
-        cmd.add_css_class("hash")
-        c.append(cmd)
+        self.missing_card = c = self.card(box, "Aufnahme-Programm fehlt")
+        self.missing_txt = Gtk.Label(label="", xalign=0, wrap=True)
+        self.missing_txt.add_css_class("note")
+        c.append(self.missing_txt)
+        self.missing_cmd = Gtk.Label(label="sudo pacman -S wf-recorder", xalign=0, selectable=True)
+        self.missing_cmd.add_css_class("hash")
+        c.append(self.missing_cmd)
         b = Gtk.Button(label="󰑐  Erneut prüfen", halign=Gtk.Align.START)
         b.add_css_class("pb"); b.add_css_class("small")
         b.connect("clicked", lambda *_: self.check_tool())
@@ -250,21 +263,36 @@ class RecorderPage(Gtk.ScrolledWindow):
         return box
 
     def check_tool(self):
-        self.stack.set_visible_child_name("setup" if shutil.which("wf-recorder") else "missing")
+        kind, hint = rx.environment()
+        if kind == "no":
+            self.missing_card.set_title("Aufnahme geht hier nicht direkt")
+            self.missing_txt.set_label(hint)
+            self.missing_cmd.set_visible(False)
+            self.stack.set_visible_child_name("missing")
+        elif not shutil.which("wf-recorder"):
+            self.missing_card.set_title("Aufnahme-Programm fehlt")
+            self.missing_txt.set_label("Für Bildschirmaufnahmen braucht Scourge das kleine Programm wf-recorder. "
+                                       "Einmal in einem Terminal installieren (Arch: sudo pacman -S wf-recorder, "
+                                       "Debian/Ubuntu: sudo apt install wf-recorder):")
+            self.missing_cmd.set_label("sudo pacman -S wf-recorder")
+            self.missing_cmd.set_visible(True)
+            self.stack.set_visible_child_name("missing")
+        else:
+            self.stack.set_visible_child_name("setup")
         self.refresh_recent()
 
     def refresh_recent(self):
         while (c := self.recent_box.get_first_child()):
             self.recent_box.remove(c)
-        if not os.path.isdir(OUT_DIR):
+        if not os.path.isdir(out_dir()):
             return
-        files = sorted((os.path.join(OUT_DIR, f) for f in os.listdir(OUT_DIR) if f.endswith(".mp4")),
+        files = sorted((os.path.join(out_dir(), f) for f in os.listdir(out_dir()) if f.endswith(".mp4")),
                        key=os.path.getmtime, reverse=True)[:6]
         self.recent_box.set_visible(bool(files))
         if not files:
             return
         head = Gtk.Box(spacing=8, halign=Gtk.Align.END)
-        fb = Gtk.Button(label="󰉋 ordner öffnen", tooltip_text=OUT_DIR, valign=Gtk.Align.CENTER)
+        fb = Gtk.Button(label="󰉋 ordner öffnen", tooltip_text=out_dir(), valign=Gtk.Align.CENTER)
         fb.add_css_class("pb"); fb.add_css_class("small")
         fb.connect("clicked", lambda *_: open_folder(self.tab.win))
         head.append(fb)
@@ -372,8 +400,8 @@ class RecorderPage(Gtk.ScrolledWindow):
         self.tab.win.present()
 
     def start(self, geometry):
-        os.makedirs(OUT_DIR, exist_ok=True)
-        self.out = os.path.join(OUT_DIR, f"aufnahme-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.mp4")
+        os.makedirs(out_dir(), exist_ok=True)
+        self.out = os.path.join(out_dir(), f"aufnahme-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.mp4")
         cmd = ["wf-recorder", "-y", "-f", self.out, "-r", "60" if self.choice(self.quality) else "30"]
         if geometry:
             cmd += ["-g", geometry]
@@ -481,8 +509,8 @@ class RecorderPage(Gtk.ScrolledWindow):
             if "h264_vaapi" in self.cmd and code not in (0, 130, -2) and "vaapi" in (err or "").lower():
                 self.tab.notify("Grafikkarte konnte nicht kodieren, nimm es bitte noch einmal auf.")
             else:
-                self.tab.notify(f"Gespeichert in ~/Videos/Aufnahmen/{os.path.basename(self.out)}")
-            desktop_note(f"Aufnahme gespeichert: ~/Videos/Aufnahmen/{os.path.basename(self.out)}")
+                self.tab.notify(f"Gespeichert: {os.path.basename(self.out)}")
+            desktop_note(f"Aufnahme gespeichert: {os.path.basename(self.out)}")
             self.refresh_recent()
             if self.open_btn.get_active():
                 GLib.idle_add(lambda out=self.out: (self.tab.open_cutter(out), False)[-1])

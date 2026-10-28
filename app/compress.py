@@ -14,6 +14,8 @@ IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".avif", ".tif", ".tiff", ".bmp", "
 FORMATS = [("same", "wie original"), ("jpeg", "JPEG"), ("webp", "WebP"), ("avif", "AVIF"), ("png", "PNG")]
 EXT = {"jpeg": ".jpg", "webp": ".webp", "avif": ".avif", "png": ".png"}
 SIZES = [(0, "original"), (3840, "3840 px"), (2560, "2560 px"), (1920, "1920 px"), (1280, "1280 px"), (800, "800 px")]
+SCALES = [(100, "100 %"), (75, "75 %"), (50, "50 %"), (25, "25 %")]
+DEFAULT_NAME = "{name}-klein"
 
 COMPRESS_CSS = """
 .cmp-drop { border: 1px dashed alpha(@primary, 0.5); border-radius: 6px; padding: 18px; }
@@ -22,6 +24,14 @@ COMPRESS_CSS = """
 .cmp-bad { color: alpha(@foreground, 0.5); }
 .cmp-prev { border: 1px solid alpha(@primary, 0.3); border-radius: 4px; }
 """
+
+
+def _pics():
+    try:
+        import settings_menu
+        return settings_menu.folder("pic_dir", "~/Pictures")
+    except Exception:
+        return os.path.expanduser("~/Pictures")
 
 
 def human(n):
@@ -56,8 +66,10 @@ def load(path):
     return img, exif, icc, animated
 
 
-def resize(img, edge):
+def resize(img, edge, scale=100):
     from PIL import Image
+    if scale and scale < 100:
+        img = img.resize((max(1, round(img.width * scale / 100)), max(1, round(img.height * scale / 100))), Image.LANCZOS)
     if edge and max(img.size) > edge:
         f = edge / max(img.size)
         img = img.resize((max(1, round(img.width * f)), max(1, round(img.height * f))), Image.LANCZOS)
@@ -108,7 +120,7 @@ def compress(path, opts):
     size_in = os.path.getsize(path)
     img, exif, icc, animated = load(path)
     fmt = target_format(path, opts["fmt"])
-    img = resize(img, opts["edge"])
+    img = resize(img, opts["edge"], opts.get("scale", 100))
     note = "nur erstes Bild der Animation" if animated else ""
 
     if opts["mode"] == "quality":
@@ -145,13 +157,30 @@ def compress(path, opts):
     return {"data": data, "fmt": fmt, "size_in": size_in, "size_out": len(data), "dims": img.size, "note": note}
 
 
-def out_path(path, fmt, folder):
+def safe_name(text):
+    """Dateiname ohne Pfadtrenner und Sonderzeichen, die Dateisysteme nicht mögen."""
+    out = "".join("_" if c in '/\\:*?"<>|' or ord(c) < 32 else c for c in text).strip(" .")
+    return out or "bild"
+
+
+def out_path(path, fmt, folder, template=DEFAULT_NAME, nr=1, dims=None):
+    """Zieldatei nach Vorlage: {name} Originalname, {nr} laufende Nummer, {datum}, {breite}, {höhe}. Nie überschreiben."""
+    import datetime
     base = os.path.splitext(os.path.basename(path))[0]
+    w, h = dims or (0, 0)
+    try:
+        name = (template or DEFAULT_NAME).format(name=base, nr=f"{nr:03d}", datum=f"{datetime.date.today():%Y-%m-%d}",
+                                                 breite=w, **{"höhe": h})
+    except (KeyError, IndexError, ValueError):
+        name = base + "-klein"
+    if name == base and not folder:               # sonst würde das Original ersetzt
+        name = base + "-klein"
+    name = safe_name(name)
     folder = folder or os.path.dirname(path)
-    p = os.path.join(folder, f"{base}-klein{EXT[fmt]}")
+    p = os.path.join(folder, f"{name}{EXT[fmt]}")
     i = 2
-    while os.path.exists(p):
-        p = os.path.join(folder, f"{base}-klein-{i}{EXT[fmt]}")
+    while os.path.exists(p) or os.path.abspath(p) == os.path.abspath(path):
+        p = os.path.join(folder, f"{name}-{i}{EXT[fmt]}")
         i += 1
     return p
 
@@ -169,8 +198,9 @@ class CompressPage(tools.ToolPage):
         self.preview_path = None
         self._prev_timer = 0
         self._prev_token = 0
-        self.opts = {"fmt": "same", "mode": "quality", "quality": 80, "target_kb": 500, "edge": 0,
+        self.opts = {"fmt": "same", "mode": "quality", "quality": 80, "target_kb": 500, "edge": 0, "scale": 100,
                      "strip": True, "png_lossy": True}
+        self.name_tpl = DEFAULT_NAME
 
         # --- Dateien ---
         c = self.card("bilder")
@@ -219,6 +249,8 @@ class CompressPage(tools.ToolPage):
         c.append(self.t_box)
         self.label(c, "längste seite")
         self.seg(c, SIZES, 0, lambda k: self.set_opt("edge", k))
+        self.label(c, "oder verkleinern auf")
+        self.seg(c, SCALES, 100, lambda k: self.set_opt("scale", k))
         self.switch_row(c, "metadaten entfernen (GPS, Kamera, Datum …)", True, lambda v: self.set_opt("strip", v))
         self.switch_row(c, "PNG: farben reduzieren (verlustbehaftet, oft 60–80 % kleiner)", True,
                         lambda v: self.set_opt("png_lossy", v))
@@ -228,6 +260,21 @@ class CompressPage(tools.ToolPage):
         self.folder_lbl.add_css_class("note")
         self.folder_lbl.set_visible(False)
         c.append(self.folder_lbl)
+        self.label(c, "dateiname")
+        name_row = Gtk.Box(spacing=8)
+        self.name_entry = Gtk.Entry(text=DEFAULT_NAME, hexpand=True,
+                                    tooltip_text="Platzhalter: {name} Originalname · {nr} laufende Nummer · {datum} · {breite} · {höhe}")
+        self.name_entry.add_css_class("pb")
+        self.name_entry.connect("changed", lambda e: self.set_name(e.get_text()))
+        name_row.append(self.name_entry)
+        for label, tpl in (("-klein", "{name}-klein"), ("nummeriert", "bild-{nr}"), ("mit Datum", "{name}-{datum}")):
+            b = self.button(label, lambda t=tpl: self.name_entry.set_text(t), small=True)
+            name_row.append(b)
+        c.append(name_row)
+        self.name_lbl = Gtk.Label(xalign=0, ellipsize=1)
+        self.name_lbl.add_css_class("note")
+        c.append(self.name_lbl)
+        self.set_name(DEFAULT_NAME)
 
         # --- Vorschau ---
         self.prev_card = self.card("vorschau")
@@ -315,6 +362,12 @@ class CompressPage(tools.ToolPage):
         self.t_box.set_visible(mode == "target")
         self.set_opt("mode", mode)
 
+    def set_name(self, text):
+        self.name_tpl = text.strip() or DEFAULT_NAME
+        ex = out_path(self.files[0] if self.files else "/tmp/beispiel.jpg", "jpeg", "/nonexistent-preview",
+                      self.name_tpl, 1, (1920, 1080))
+        self.name_lbl.set_label("z. B. " + os.path.basename(ex))
+
     def set_save(self, key):
         if key == "next":
             self.out_folder = None
@@ -339,7 +392,7 @@ class CompressPage(tools.ToolPage):
         filters = Gio.ListStore.new(Gtk.FileFilter)
         filters.append(f)
         dlg = Gtk.FileDialog(title="Bilder zum Komprimieren", filters=filters,
-                             initial_folder=Gio.File.new_for_path(os.path.expanduser("~/Pictures")))
+                             initial_folder=Gio.File.new_for_path(_pics()))
 
         def done(d, res):
             try:
@@ -350,7 +403,7 @@ class CompressPage(tools.ToolPage):
         dlg.open_multiple(self.tab.win, None, done)
 
     def pick_folder(self):
-        dlg = Gtk.FileDialog(title="Ordner mit Bildern", initial_folder=Gio.File.new_for_path(os.path.expanduser("~/Pictures")))
+        dlg = Gtk.FileDialog(title="Ordner mit Bildern", initial_folder=Gio.File.new_for_path(_pics()))
 
         def done(d, res):
             try:
@@ -379,6 +432,18 @@ class CompressPage(tools.ToolPage):
             self.preview_path = self.files[0]
         self.refresh_list()
         self.schedule_preview()
+
+    def remove_file(self, path):
+        if path in self.files:
+            self.files.remove(path)
+            self.results.pop(path, None)
+        if self.preview_path == path:
+            self.preview_path = self.files[0] if self.files else None
+            if self.preview_path:
+                self.schedule_preview(0)
+            else:
+                self.prev_card.set_visible(False)
+        self.refresh_list()
 
     def clear_files(self):
         self.files, self.results, self.preview_path = [], {}, None
@@ -415,6 +480,10 @@ class CompressPage(tools.ToolPage):
                                  + (f"  ({r['note']})" if r["note"] else ""))
                 info.add_css_class("cmp-good")
             row.append(info)
+            rm = Gtk.Button(label="✕", tooltip_text="Aus der Liste nehmen", valign=Gtk.Align.CENTER)
+            rm.add_css_class("pb"); rm.add_css_class("small")
+            rm.connect("clicked", lambda *_, p=p: self.remove_file(p))
+            row.append(rm)
             b.set_child(row)
             b.set_tooltip_text("Vorschau mit den aktuellen Einstellungen")
             b.connect("clicked", lambda *_, p=p: self.show_preview(p))
@@ -477,9 +546,12 @@ class CompressPage(tools.ToolPage):
         self.go_btn.set_visible(False)
         self.stop_btn.set_visible(True)
         self.open_btn.set_visible(False)
-        files, opts, folder = list(self.files), dict(self.opts), self.out_folder
+        files, opts, folder, tpl = list(self.files), dict(self.opts), self.out_folder, self.name_tpl
+        numbers = {p: i for i, p in enumerate(files, 1)}
         state = {"n": 0, "in": 0, "out": 0, "written": [], "skipped": 0, "errors": 0}
         self.sum_lbl.set_label(f"0 von {len(files)} …")
+
+        name_lock = threading.Lock()
 
         def one(p):
             if self.cancel.is_set():
@@ -488,9 +560,12 @@ class CompressPage(tools.ToolPage):
                 r = compress(p, opts)
             except Exception as e:
                 return p, f"fehler: {e.__class__.__name__}"
-            if r["size_out"] >= r["size_in"] and r["fmt"] == target_format(p, "same") and not opts["edge"]:
+            if r["size_out"] >= r["size_in"] and r["fmt"] == target_format(p, "same") and not opts["edge"] \
+                    and opts.get("scale", 100) >= 100:
                 return p, "schon klein – übersprungen"
-            dst = out_path(p, r["fmt"], folder)
+            with name_lock:
+                dst = out_path(p, r["fmt"], folder, tpl, numbers[p], r["dims"])
+                open(dst, "wb").close()               # Name sofort belegen, sonst nehmen parallele Läufe denselben
             with open(dst, "wb") as fh:
                 fh.write(r["data"])
             r["dst"] = dst

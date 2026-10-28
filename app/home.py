@@ -54,6 +54,7 @@ ACTIONS = [
     ("record", "󰑋", "Bildschirm aufnehmen", "Ganzer Bildschirm, Bereich oder Fenster, mit oder ohne Ton", True),
     ("cut", "󰆐", "Video schneiden", "Zeitleiste, Schneiden, Teile entfernen, Export als MP4, WebM oder GIF", True),
     ("meme", "󰏫", "Meme-Editor", "Bild oder Video wählen: Text oben/unten, Stift, Zuschneiden", False),
+    ("templates", "󰋩", "Meme-Vorlagen", "Eigene Bilder für Memes sammeln und mit einem Klick im Editor öffnen", False),
     ("studio", "󰏘", "Verlauf & ASCII", "Ästhetische Farbverläufe als PNG/JPG – und Bilder als ASCII-Kunst", False),
     ("compress", "\U000F0044", "Bilder komprimieren", "Viele Bilder auf einmal kleiner: Qualität, Zielgröße, WebP/AVIF", False),
     ("convert", "󰈙", "Dokumente umwandeln", "PDFs zusammenfügen, Seiten teilen/drehen, PDF ⇄ Bild ⇄ Text ⇄ Word", False),
@@ -120,6 +121,7 @@ class HomePage(Gtk.ScrolledWindow):
         self.index = []          # (icon, name, desc, callback) für die Suche
         self.sections = []
         self._build_search(page)
+        self._build_welcome(page)
 
         def heading(title, desc):
             """Rubrik als Kasten mit Titel im Rahmen; liefert den Kasten, Inhalt kommt per append() hinein."""
@@ -135,7 +137,7 @@ class HomePage(Gtk.ScrolledWindow):
                               "Dateien lassen sich auch einfach hierher ziehen.")
         fl = flow()
         cbs = {"open": tab.on_open_player, "file": tab.on_open_check, "record": tab.open_recorder, "cut": self.pick_video, "meme": self.pick_meme,
-               "studio": self.open_studio, "compress": self.open_compress, "convert": self.open_convert}
+               "templates": self.open_templates, "studio": self.open_studio, "compress": self.open_compress, "convert": self.open_convert}
         for key, icon, name, desc, primary in ACTIONS:
             fl.append(self.mk(icon, name, desc, cbs[key], primary))
         box.append(fl)
@@ -212,6 +214,36 @@ class HomePage(Gtk.ScrolledWindow):
         self.results.append(self.results_flow)
         self.results.append(self.results_note)
         page.append(self.results)
+
+    def _build_welcome(self, page):
+        """Beim allerersten Start: kurze Orientierung. „Verstanden“ blendet sie dauerhaft aus."""
+        import settings_menu
+        self.welcome = None
+        if settings_menu.get("welcome_seen", False):
+            return
+        c = ch.Card("willkommen bei scourge", spacing=8)
+        for icon, text in (("󰝰", "Dateien einfach hierher ziehen: Bilder, Videos und Musik spielen sofort, PDFs öffnen sich im PDF-Editor."),
+                           ("󰑋", "Bildschirm aufnehmen, Videos schneiden und aus Bildern Memes machen: die Kacheln unten."),
+                           ("󰈈", "„Datei prüfen“ zeigt, was in einer Datei steckt: Metadaten, Ort, Kamera, versteckte Spuren."),
+                           ("󰒓", "Oben rechts das Zahnrad: Design, Sprache, Ordner und Hintergrundmodus."),
+                           ("󰍉", "Strg+F sucht in allem, auch in den Einstellungen.")):
+            row = Gtk.Box(spacing=10)
+            i = Gtk.Label(label=icon, valign=Gtk.Align.START)
+            i.add_css_class("card-icon")
+            t = Gtk.Label(label=text, xalign=0, wrap=True, hexpand=True)
+            row.append(i)
+            row.append(t)
+            c.append(row)
+        ok = Gtk.Button(label="󰄬  Verstanden", halign=Gtk.Align.START)
+        ok.add_css_class("pb")
+
+        def done(*_):
+            settings_menu.put("welcome_seen", True)
+            c.set_visible(False)
+        ok.connect("clicked", done)
+        c.append(ok)
+        page.append(c)
+        self.welcome = c
 
     def focus_search(self):
         self.search.grab_focus()
@@ -306,6 +338,10 @@ class HomePage(Gtk.ScrolledWindow):
     def open_convert(self):
         from convert import ConvertPage
         self.tab.open_page("tool-convert", lambda: ConvertPage(self.tab))
+
+    def open_templates(self):
+        from memetpl import TemplatePage
+        self.tab.open_page("tool-templates", lambda: TemplatePage(self.tab))
 
     def open_compress(self):
         from compress import CompressPage

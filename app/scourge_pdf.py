@@ -43,6 +43,8 @@ def load_icon_font():
 
 
 load_icon_font()
+import i18n  # noqa: E402
+i18n.setup()           # Sprache aus den Einstellungen (Zahnrad → sprache) – vor dem ersten Widget
 import chrome as ch  # noqa: E402
 import glass  # noqa: E402
 from viewer import VIEWER_CSS, PdfView  # noqa: E402

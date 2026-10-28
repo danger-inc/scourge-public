@@ -33,6 +33,12 @@ def put(key, value):
     os.replace(tmp, CONF)
 
 
+def folder(key, default):
+    """Ordner aus den Einstellungen (Zahnrad → ordner), sonst der Standard."""
+    d = get(key)
+    return os.path.expanduser(d) if d else os.path.expanduser(default)
+
+
 def background_mode(key="background"):
     """Fenster schließen = im Hintergrund weiterlaufen (nur Linux; Windows hat kein D-Bus zum Wiederfinden)."""
     return not WINDOWS and bool(get(key, True))
@@ -91,6 +97,52 @@ def _row(title, desc, widget):
     widget.set_valign(Gtk.Align.CENTER)
     box.append(widget)
     return box
+
+
+def _folder_row(win, key, title, default):
+    """Zeile: Ordner anzeigen und per Auswahlfenster ändern (leer = Standard)."""
+    from gi.repository import Gio, GLib
+    label = Gtk.Label(label=folder(key, default).replace(os.path.expanduser("~"), "~", 1), xalign=1, ellipsize=1,
+                      max_width_chars=30)
+    label.add_css_class("key")
+    btn = Gtk.Button(label="ändern …")
+    btn.add_css_class("pb"); btn.add_css_class("small")
+    reset = Gtk.Button(label="Standard", tooltip_text="Zurück auf " + default)
+    reset.add_css_class("pb"); reset.add_css_class("small")
+    box = Gtk.Box(spacing=6)
+    box.append(label)
+    box.append(btn)
+    box.append(reset)
+
+    def pick(*_):
+        dlg = Gtk.FileDialog(title="Ordner wählen", initial_folder=Gio.File.new_for_path(folder(key, default)))
+
+        def done(d, res):
+            try:
+                path = d.select_folder_finish(res).get_path()
+            except GLib.Error:
+                return
+            put(key, path)
+            label.set_label(path.replace(os.path.expanduser("~"), "~", 1))
+        dlg.select_folder(win, None, done)
+    btn.connect("clicked", pick)
+
+    def back(*_):
+        put(key, None)
+        label.set_label(default)
+    reset.connect("clicked", back)
+    return _row(title, "", box)
+
+
+def _restart(app, cmd):
+    """App beenden und danach neu starten (ein kleines sh wartet, bis der Prozess weg ist)."""
+    import subprocess
+    starter = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scourge-pdf.sh" if cmd == "scourge-pdf" else "scourge.sh")
+    if not WINDOWS and os.path.exists(starter):
+        subprocess.Popen(["sh", "-c", 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"', "sh",
+                          str(os.getpid()), starter], start_new_session=True, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    app.really_quit()
 
 
 def _switch(on, cb):
@@ -190,6 +242,41 @@ def open_window(app, glass_toggle, cmd="scourge", name="Scourge", bgkey="backgro
         n = Gtk.Label(label=f"Unter Windows beendet ✕ {name} ganz.", xalign=0, wrap=True)
         n.add_css_class("note")
         c.append(n)
+        body.append(c)
+
+    if cmd == "scourge":
+        c = ch.Card("ordner", spacing=10)
+        for key, title, default in (("rec_dir", "aufnahmen", "~/Videos/Aufnahmen"), ("pic_dir", "bilder speichern", "~/Pictures")):
+            c.append(_folder_row(win, key, title, default))
+        n = Gtk.Label(label="Aufnahmen werden im ersten Ordner gespeichert. Die Speichern-Fenster für Memes, Verläufe und "
+                            "Bilder schlagen den zweiten vor.", xalign=0, wrap=True)
+        n.add_css_class("note")
+        c.append(n)
+        body.append(c)
+
+    c = ch.Card("sprache", spacing=10)
+    langs = (("auto", "automatisch (wie das System)"), ("de", "Deutsch"), ("en", "English"))
+    dd = Gtk.DropDown.new_from_strings([n for _, n in langs])
+    cur = get("lang", "auto")
+    dd.set_selected(next((i for i, (k, _) in enumerate(langs) if k == cur), 0))
+    note = Gtk.Label(label="", xalign=0, wrap=True)
+    note.add_css_class("note")
+
+    def lang_changed(d, _p):
+        put("lang", langs[d.get_selected()][0])
+        note.set_label("Gilt nach dem nächsten Start von " + name + ".")
+    dd.connect("notify::selected", lang_changed)
+    c.append(_row("sprache der oberfläche", "Deutsch oder English", dd))
+    c.append(note)
+    b = ch.button("󰜉 jetzt neu starten", f"{name} beenden und gleich wieder öffnen",
+                  callback=lambda: (win.close(), _restart(app, cmd)))
+    c.append(b)
+    body.append(c)
+
+    if cmd == "scourge":
+        c = ch.Card("hilfe", spacing=10)
+        c.append(ch.button("󰋗 willkommens-hinweis wieder zeigen", "Die Einstiegskarte auf der Startseite erneut anzeigen",
+                           callback=lambda: (put("welcome_seen", False), app.notify("Beim nächsten Start der Startseite wieder da"))))
         body.append(c)
 
     c = ch.Card("tabs & fenster", spacing=10)

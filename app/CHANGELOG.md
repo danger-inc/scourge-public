@@ -1,5 +1,16 @@
 # scourge – Änderungen
 
+## 2.17.0 (2026-10-28)
+- **English**: die Oberfläche gibt es jetzt auch auf Englisch (Zahnrad → sprache: automatisch, Deutsch oder English; ohne Einstellung folgt Scourge der Systemsprache). Übersetzt sind die Startseite, Aufnahme, Meme-Editor, Studio, Komprimieren, Umwandeln, Schnitt, PDF-Editor, Einstellungen und die Datei-Prüfung; einige Spezialseiten (Hyprland, Systemeinstellungen) bleiben vorerst Deutsch.
+- **Bilder komprimieren**: Ganze Ordner (auch mit Unterordnern) ziehen oder wählen, Dateinamen nach Vorlage (`{name}`, `{nr}`, `{datum}`, `{breite}`, `{höhe}`), Verkleinern in Prozent (75/50/25 %) zusätzlich zur längsten Seite, einzelne Bilder per ✕ aus der Liste nehmen. Originale werden nie überschrieben.
+- **Meme-Editor**: Bild drehen und spiegeln (mit Strg+Z), **Freistellen** (einfarbigen Hintergrund durchsichtig machen, ohne KI), JPG-Export legt Transparenz auf Weiß. **Animierte GIFs** lassen sich als Meme bearbeiten und wieder als animiertes GIF speichern.
+- **Meme-Vorlagen**: eigene Bilder sammeln (aus dem Editor oder per Ziehen) und mit einem Klick im Editor öffnen; neue Kachel auf der Startseite.
+- **Verlauf**: Rückgängig/Wiederholen (Strg+Z), eigene Verläufe speichern, der letzte Stand bleibt beim nächsten Start erhalten, und **als Hintergrundbild setzen** (awww, swww, GNOME, KDE, Cinnamon, MATE, Xfce, swaybg, feh).
+- **Einstellungen an einer Stelle**: Aufnahme- und Bilder-Ordner, Sprache, Neustart-Knopf und „Willkommens-Hinweis wieder zeigen“.
+- **Erster Start**: Willkommens-Karte auf der Startseite („Verstanden“ blendet sie dauerhaft aus).
+- **Datei ablegen überall**: Eine Datei, die auf eine Seite ohne eigenes Ablegen fällt (Aufnahme, Werkzeuge …), wird wie auf der Startseite geöffnet. Im Editor mit Änderungen kommt stattdessen ein Hinweis.
+- **Aufnahme auf anderen Systemen**: GNOME, KDE, X11 und Windows bekommen statt einer Fehlermeldung einen Hinweis, womit dort aufgenommen wird.
+
 ## 2.16.0 (2026-10-28)
 - **Aufnahme**: Ton jetzt auch „Beides“ (Systemton und Mikrofon gemischt) mit Mikrofon-Auswahl, Countdown (aus/3/5/10 s) und „Stopp nach“ (1 Minute bis 1 Stunde), optional **Kamera-Blase** (runde Vorschau unten rechts, wird mit aufgenommen) und **Maus hervorheben** (gelber Ring um den Zeiger). „Danach im Schnitt öffnen“ lässt sich abschalten. Die Auswahl wird gemerkt. Der Ring braucht gtk4-layer-shell, Klicks lassen sich ohne Eingabe-Rechte nicht erkennen.
 - **PDF-Seitenleiste** (Knopf links oben oder F9): Miniaturen, Gliederung (Lesezeichen) und alle Suchtreffer mit Textauszug.

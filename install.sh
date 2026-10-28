@@ -29,6 +29,16 @@ elif (( ! UPDATE )); then
     echo "Übersprungen. (Bei fehlenden Paketen: siehe README.md)"
 fi
 echo
+# Optional: Texterkennung (OCR) für gescannte PDFs und der Ring um die Maus bei Bildschirmaufnahmen
+if ask "Optional: Texterkennung (OCR, Deutsch+Englisch) und Maus-Ring für Aufnahmen installieren?" n; then
+    pkg_install \
+        "tesseract tesseract-data-deu tesseract-data-eng gtk4-layer-shell" \
+        "tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng gir1.2-gtk4layershell-1.0" \
+        "tesseract tesseract-langpack-deu tesseract-langpack-eng gtk4-layer-shell" \
+        "tesseract-ocr tesseract-ocr-traineddata-german tesseract-ocr-traineddata-english" \
+        || warn "Optionale Pakete nicht vollständig – Scourge läuft auch ohne."
+    echo
+fi
 
 # ---------------------------------------------------------------- App kopieren
 say "Kopiere Scourge nach $APP_DIR ..."
@@ -88,6 +98,7 @@ done
 for t in pdftotext pdfimages qpdf; do
     command -v "$t" >/dev/null 2>&1 && echo "  $t: ok" || echo "  $t: fehlt – PDF-Text/-Bilder bzw. PDF bereinigen gehen dann nicht (Paket poppler-utils / qpdf)"
 done
+command -v tesseract >/dev/null 2>&1 && echo "  tesseract: ok" || echo "  tesseract: fehlt – nur für „Text erkennen (OCR)“ im PDF-Editor (Pakete tesseract + Sprachdaten)"
 for t in wf-recorder slurp; do
     command -v "$t" >/dev/null 2>&1 && echo "  $t: ok" || echo "  $t: fehlt – nur für die Bildschirmaufnahme (wlroots/Hyprland/Sway)"
 done

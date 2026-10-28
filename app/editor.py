@@ -13,6 +13,8 @@ gi.require_version("Graphene", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gtk, Pango, PangoCairo
 from PIL import Image, ImageOps
 
+import imgops
+
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
 
 def _theme_text():
@@ -124,6 +126,10 @@ class MemeEditor(Gtk.Box):
         self.reload_colors()
 
         self.img = None          # Original (PIL), nur zum Vergleichen
+        self.base = None         # Original nach Drehen/Spiegeln/Hintergrund entfernen (das, was angezeigt wird)
+        self.ops = []            # Schrittliste dafür (siehe imgops.apply_ops)
+        self.bg_tol = 28
+        self.bg_glob = False
         self.surface = None      # volle Auflösung für den Export
         self._cache = None       # verkleinerte Fläche für die Anzeige
         self._cache_key = None
@@ -167,7 +173,8 @@ class MemeEditor(Gtk.Box):
 
         self.tool_buttons = {}
         group = None
-        for tool, label, key in (("crop", "󰆞  Zuschneiden", "C"), ("pen", "󰏪  Stift", "B"), ("text", "󰊄  Text", "T")):
+        for tool, label, key in (("crop", "󰆞  Zuschneiden", "C"), ("pen", "󰏪  Stift", "B"), ("text", "󰊄  Text", "T"),
+                                 ("bg", "\U000F0209  Freistellen", "F")):
             b = Gtk.ToggleButton(label=label, tooltip_text=f"Taste {key}")
             b.add_css_class("pb"); b.add_css_class("tool")
             if group:
@@ -237,6 +244,7 @@ class MemeEditor(Gtk.Box):
         self.panes.add_named(self.build_crop_pane(), "crop")
         self.panes.add_named(self.build_pen_pane(), "pen")
         self.panes.add_named(self.build_text_pane(), "text")
+        self.panes.add_named(self.build_bg_pane(), "bg")
 
         # Export
         c = self.card(side, "Fertig?")
@@ -249,6 +257,10 @@ class MemeEditor(Gtk.Box):
         self.copy_btn.connect("clicked", lambda *_: self.copy_image())
         row.append(self.save_btn); row.append(self.copy_btn)
         c.append(row)
+        self.tpl_btn = Gtk.Button(label="󰋩  Als Vorlage speichern", tooltip_text="Das Bild (ohne Text und Zeichnungen) für spätere Memes merken")
+        self.tpl_btn.add_css_class("pb"); self.tpl_btn.add_css_class("small")
+        self.tpl_btn.connect("clicked", lambda *_: self.save_template())
+        c.append(self.tpl_btn)
         self.export_note = self.note("Kopieren legt das fertige Meme in die Zwischenablage, z. B. für Discord oder WhatsApp.")
         c.append(self.export_note)
 
@@ -389,6 +401,16 @@ class MemeEditor(Gtk.Box):
             row.append(b)
         self.ratio_buttons["Frei"].set_active(True)
         box.append(row)
+        row = Gtk.Box(spacing=6)
+        self.rot_btns = []
+        for label, tip, op in (("↺", "90° links drehen", "ccw"), ("↻", "90° rechts drehen", "cw"),
+                               ("⇆", "Waagerecht spiegeln", "fliph"), ("⇅", "Senkrecht spiegeln", "flipv")):
+            b = Gtk.Button(label=label, tooltip_text=tip)
+            b.add_css_class("pb"); b.add_css_class("small")
+            b.connect("clicked", lambda *_, op=op: self.transform(op))
+            self.rot_btns.append(b)
+            row.append(b)
+        box.append(row)
         row = Gtk.Box(spacing=8, homogeneous=True)
         apply = Gtk.Button(label="󰄬  Anwenden", tooltip_text="Enter")
         apply.add_css_class("pb")
@@ -402,6 +424,34 @@ class MemeEditor(Gtk.Box):
         self.crop_info.add_css_class("key-hint")
         box.append(self.crop_info)
         return box
+
+    def build_bg_pane(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.append(self.note("Auf den Hintergrund klicken: Diese Farbe wird durchsichtig (für einfarbige Hintergründe, "
+                             "keine KI). Als PNG speichern, damit die Transparenz bleibt."))
+        self.bg_tol_slider = self.slider(2, 90, self.bg_tol, self.on_bg_tol)
+        box.append(self.labeled("Toleranz", self.bg_tol_slider))
+        self.bg_glob_btn = Gtk.ToggleButton(label="Überall im Bild", tooltip_text="Aus: nur die Fläche, auf die du klickst")
+        self.bg_glob_btn.add_css_class("pb"); self.bg_glob_btn.add_css_class("small")
+        self.bg_glob_btn.connect("toggled", lambda b: setattr(self, "bg_glob", b.get_active()))
+        box.append(self.bg_glob_btn)
+        reset = Gtk.Button(label="Freistellen zurücknehmen")
+        reset.add_css_class("pb"); reset.add_css_class("small")
+        reset.connect("clicked", lambda *_: self.undo_bg())
+        box.append(reset)
+        self.bg_info = self.note("")
+        box.append(self.bg_info)
+        return box
+
+    def on_bg_tol(self, s):
+        self.bg_tol = int(s.get_value())
+
+    def undo_bg(self):
+        bgs = [i for i, o in enumerate(self.ops) if not isinstance(o, str)]
+        if bgs:
+            self.push_undo()
+            del self.ops[bgs[-1]]
+            self.rebuild_base(keep_objects=True)
 
     def build_pen_pane(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -458,6 +508,12 @@ class MemeEditor(Gtk.Box):
         self.img = img
         self.video, self.video_info = video, info or {}
         self.tool, self.draft = "text", None  # alten Zuschnitt-Entwurf nicht aufs neue Bild anwenden
+        self.ops = []
+        self.base = img
+        for b in self.rot_btns:
+            b.set_sensitive(not video)                # Drehen/Spiegeln/Freistellen nur bei Bildern
+        self.tool_buttons["bg"].set_sensitive(not video)
+        self.tpl_btn.set_sensitive(not video)
         self.surface, self._data = pil_to_surface(img)
         self.W, self.H = self.surface.get_width(), self.surface.get_height()
         self._cache = self._cache_key = None
@@ -471,8 +527,13 @@ class MemeEditor(Gtk.Box):
         self.tool_buttons["text"].set_active(True)
         self.set_tool("text")
         self.update_buttons()
-        self.video_bar.set_visible(bool(video))
-        if video:
+        self.is_gif = bool(video) and str(video).lower().endswith(".gif")
+        self.video_bar.set_visible(bool(video) and not self.is_gif)
+        if self.is_gif:
+            self.save_btn.set_tooltip_text("Als animiertes GIF oder MP4 speichern (Strg+S)")
+            self.export_note.set_label("Animiertes GIF: die Vorschau zeigt das erste Bild, gespeichert wird mit Text und "
+                                       "Zeichnungen in jedem Bild. Kopieren legt eine GIF-Datei in die Zwischenablage.")
+        elif video:
             self.save_btn.set_tooltip_text("Als MP4 oder GIF speichern (Strg+S)")
             self.export_note.set_label("Text, Zeichnungen und Zuschnitt werden ins ganze Video eingebrannt. "
                                        "Kopieren legt die fertige MP4-Datei in die Zwischenablage.")
@@ -541,7 +602,7 @@ class MemeEditor(Gtk.Box):
 
     def state(self):
         return copy.deepcopy({"objects": self.objects, "crop": self.crop,
-                              "top": self.top_text, "bottom": self.bottom_text})
+                              "top": self.top_text, "bottom": self.bottom_text, "ops": self.ops})
 
     def push_undo(self, key=None):
         if key is not None and key == self._undo_key:
@@ -556,6 +617,9 @@ class MemeEditor(Gtk.Box):
         self._restoring = True
         self.objects, self.crop = st["objects"], st["crop"]
         self.top_text, self.bottom_text = st["top"], st["bottom"]
+        if list(st.get("ops", [])) != list(self.ops):
+            self.ops = list(st.get("ops", []))
+            self.rebuild_base(keep_objects=True, restoring=True)
         self.top_entry.set_text(self.top_text)
         self.bottom_entry.set_text(self.bottom_text)
         self._restoring = False
@@ -579,6 +643,81 @@ class MemeEditor(Gtk.Box):
             self.restore(self.redo_stack.pop())
             self._undo_key = None
 
+    def rebuild_base(self, keep_objects=True, restoring=False):
+        """Anzeigebild aus Original + Schrittliste neu berechnen. Objekte und Zuschnitt liegen schon im neuen Raum."""
+        self.base = imgops.apply_ops(self.img, self.ops) if self.ops else self.img
+        self.surface, self._data = pil_to_surface(self.base)
+        old = (self.W, self.H)
+        self.W, self.H = self.surface.get_width(), self.surface.get_height()
+        self._cache = self._cache_key = None
+        if not restoring and (self.W, self.H) != old:
+            self.crop = (0, 0, self.W, self.H)
+        if self.tool == "crop":
+            self.draft = list(self.crop)
+        self.canvas.queue_draw()
+
+    def transform(self, op):
+        """90° drehen / spiegeln: Bild, Striche, Texte und Zuschnitt wandern mit."""
+        if not self.surface or self.video:
+            return
+        if self.tool == "crop":
+            self.apply_crop(switch=False)
+        self.push_undo()
+        w, h = self.W, self.H
+        for o in self.objects:
+            if o["type"] == "stroke":
+                o["points"] = [imgops.map_point(op, x, y, w, h) for x, y in o["points"]]
+            elif o["type"] == "text":
+                o["x"], o["y"] = imgops.map_point(op, o["x"], o["y"], w, h)
+        new_crop = imgops.map_rect(op, self.crop, w, h)
+        self.ops.append(op)
+        self.rebuild_base(restoring=True)
+        self.crop = tuple(new_crop)
+        if self.tool == "crop":
+            self.draft = list(self.crop)
+        self._bboxes = {}
+        self.update_buttons()
+        self.canvas.queue_draw()
+
+    def save_template(self):
+        """Bild (mit Drehen/Freistellen, ohne Text und Striche) als Meme-Vorlage ablegen."""
+        if not self.base or self.video:
+            return self.app.notify("Vorlagen gehen nur mit Bildern, nicht mit Videos.")
+        import memetpl
+        win = Gtk.Window(title="Als Vorlage speichern", transient_for=self.app.win, modal=True, default_width=320)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=14, margin_bottom=14,
+                      margin_start=14, margin_end=14)
+        box.append(Gtk.Label(label="Name der Vorlage:", xalign=0))
+        ent = Gtk.Entry(text=f"vorlage-{len(memetpl.listing()) + 1}", activates_default=True)
+        ent.add_css_class("pb")
+        ok = Gtk.Button(label="Speichern")
+        ok.add_css_class("suggested-action")
+        box.append(ent); box.append(ok)
+        win.set_child(box)
+        win.set_default_widget(ok)
+
+        def go(*_):
+            win.close()
+            try:
+                memetpl.save_image(self.base, ent.get_text() or "vorlage")
+                self.app.notify("Vorlage gespeichert – zu finden auf der Startseite unter „Meme-Vorlagen“")
+            except Exception as e:            # noqa: BLE001
+                self.app.notify(f"Vorlage speichern ging nicht: {e.__class__.__name__}")
+        ok.connect("clicked", go)
+        ent.connect("activate", go)
+        win.present()
+        ent.grab_focus()
+        ent.select_region(0, -1)
+
+    def bg_click(self, ix, iy):
+        """Klick im Freistellen-Modus: Hintergrundfarbe an der Stelle entfernen (Koordinaten im aktuellen Bild)."""
+        if not (0 <= ix < self.W and 0 <= iy < self.H):
+            return
+        self.push_undo()
+        self.ops.append(("bg", round(ix), round(iy), self.bg_tol, self.bg_glob))
+        self.rebuild_base(restoring=True)
+        self.bg_info.set_label("Noch nicht weg? Toleranz erhöhen und noch einmal klicken – Strg+Z nimmt es zurück.")
+
     def update_buttons(self):
         self.undo_btn.set_sensitive(bool(self.undo_stack))
         self.redo_btn.set_sensitive(bool(self.redo_stack))
@@ -601,10 +740,10 @@ class MemeEditor(Gtk.Box):
             self.select(None)
         self.tool = tool
         self._undo_key = None
-        names = {"crop": "Zuschneiden", "pen": "Stift", "text": "Text"}
+        names = {"crop": "Zuschneiden", "pen": "Stift", "text": "Text", "bg": "Freistellen"}
         self.tool_card.set_title(names[tool])
         self.panes.set_visible_child_name(tool)
-        self.canvas.set_cursor_from_name("crosshair" if tool in ("crop", "pen") else "text")
+        self.canvas.set_cursor_from_name("crosshair" if tool in ("crop", "pen", "bg") else "text")
         self.sync_text_pane()
         self.update_crop_info()
         self.canvas.queue_draw()
@@ -759,6 +898,9 @@ class MemeEditor(Gtk.Box):
             self.objects.append({"type": "stroke", "id": self.new_id(), "color": self.pen_color,
                                  "width": self.pen_width / self._xf[0], "points": [(ix, iy)]})
             self._drag = ("pen", x, y)
+        elif self.tool == "bg":
+            self.bg_click(ix, iy)
+            return
         elif self.tool == "text":
             o = self.text_at(ix, iy)
             if o:
@@ -876,8 +1018,8 @@ class MemeEditor(Gtk.Box):
             self.delete_selected()
         elif k == "space" and self.media:
             self.toggle_play()
-        elif k.lower() in ("c", "b", "t"):
-            self.tool_buttons[{"c": "crop", "b": "pen", "t": "text"}[k.lower()]].set_active(True)
+        elif k.lower() in ("c", "b", "t", "f") and not (k.lower() == "f" and self.video):
+            self.tool_buttons[{"c": "crop", "b": "pen", "t": "text", "f": "bg"}[k.lower()]].set_active(True)
         else:
             return False
         return True
@@ -1089,9 +1231,13 @@ class MemeEditor(Gtk.Box):
         if not self.surface or self.exporting:
             return
         self.finish_editing()
-        folder = os.path.expanduser("~/Videos" if self.video else "~/Pictures")
+        try:
+            import settings_menu
+            folder = os.path.expanduser("~/Videos") if self.video else settings_menu.folder("pic_dir", "~/Pictures")
+        except Exception:
+            folder = os.path.expanduser("~/Videos" if self.video else "~/Pictures")
         os.makedirs(folder, exist_ok=True)
-        ext = "mp4" if self.video else "png"
+        ext = ("gif" if getattr(self, "is_gif", False) else "mp4") if self.video else "png"
         dlg = Gtk.FileDialog(title="Meme speichern",
                              initial_name=f"meme-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.{ext}",
                              initial_folder=Gio.File.new_for_path(folder))
@@ -1111,7 +1257,10 @@ class MemeEditor(Gtk.Box):
         png = self.render_final()
         try:
             if path.lower().endswith((".jpg", ".jpeg")):
-                Image.open(io.BytesIO(png)).convert("RGB").save(path, "JPEG", quality=92)
+                im = Image.open(io.BytesIO(png)).convert("RGBA")
+                flat = Image.new("RGB", im.size, (255, 255, 255))      # JPG kann keine Transparenz: auf Weiß legen
+                flat.paste(im, mask=im.getchannel("A"))
+                flat.save(path, "JPEG", quality=92)
             elif path.lower().endswith(".webp"):
                 Image.open(io.BytesIO(png)).save(path, "WEBP", quality=92)
             else:
@@ -1131,7 +1280,8 @@ class MemeEditor(Gtk.Box):
         if self.video:
             folder = os.path.expanduser("~/.cache/scourge")
             os.makedirs(folder, exist_ok=True)
-            path = os.path.join(folder, f"meme-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.mp4")
+            ext = "gif" if getattr(self, "is_gif", False) else "mp4"
+            path = os.path.join(folder, f"meme-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.{ext}")
 
             def done(ok):
                 if ok:
@@ -1139,7 +1289,7 @@ class MemeEditor(Gtk.Box):
                     files = Gdk.ContentProvider.new_for_value(Gdk.FileList.new_from_list([f]))
                     uris = Gdk.ContentProvider.new_for_bytes("text/uri-list", GLib.Bytes.new((f.get_uri() + "\r\n").encode()))
                     self.app.win.get_clipboard().set_content(Gdk.ContentProvider.new_union([files, uris]))
-                    self.app.notify("Video kopiert, einfach einfügen")
+                    self.app.notify("GIF kopiert, einfach einfügen" if ext == "gif" else "Video kopiert, einfach einfügen")
             self.export_video(path, done)
             return
         prov = Gdk.ContentProvider.new_for_bytes("image/png", GLib.Bytes.new(self.render_final()))

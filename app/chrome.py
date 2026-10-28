@@ -209,6 +209,11 @@ class Card(Gtk.Box):
         self.set_title(title)
 
     def set_title(self, title):
+        try:
+            import i18n
+            title = i18n.tr(title) if title else title
+        except ImportError:
+            pass
         self.text = (title or "").lower()
         (self.remove_css_class if self.text else self.add_css_class)("notitle")
         self.queue_draw()

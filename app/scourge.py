@@ -40,6 +40,8 @@ def load_icon_font():
 
 
 load_icon_font()
+import i18n  # noqa: E402
+i18n.setup()           # Sprache aus den Einstellungen (Zahnrad → sprache) – vor dem ersten Widget
 sys.path.insert(1, os.path.expanduser("~/.local/share/rice-apps"))
 from editor import EDITOR_CSS, MemeEditor  # noqa: E402
 import glass  # noqa: E402
@@ -649,6 +651,12 @@ class Tab(Gtk.Box):
         self.title = "Start"
         self.pages = {}         # nachgeladene Seiten: Aufnahme, Schnitt, Werkzeuge
         self.build()
+        # Auffangnetz: eine Datei, die auf eine Seite ohne eigenes Ablegen fällt (Aufnahme, Editor, Werkzeuge …),
+        # wird wie auf der Startseite geöffnet. Seiten mit eigenem Ziel (Schnitt, Komprimieren …) behalten ihres.
+        fallback = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        fallback.set_gtypes([Gdk.FileList.__gtype__, Gdk.Texture.__gtype__])
+        fallback.connect("drop", self.on_drop_anywhere)
+        self.add_controller(fallback)
 
     def notify(self, msg):
         self.app_main.notify(msg)
@@ -1182,6 +1190,17 @@ class Tab(Gtk.Box):
         cr.fill()
 
     # ---------- Laden ----------
+    @staticmethod
+    def _animated_gif(path):
+        if not path.lower().endswith(".gif"):
+            return False
+        try:
+            from PIL import Image
+            with Image.open(path) as im:
+                return getattr(im, "n_frames", 1) > 1
+        except Exception:
+            return False
+
     def load_path(self, path, keep_parents=False, force=False):
         if not force and self.pdf_view.dirty:
             return self.app_main.confirm_unsaved([self], lambda: self.load_path(path, keep_parents, force=True))
@@ -1191,8 +1210,8 @@ class Tab(Gtk.Box):
             self.parents = []
             self.app_main.add_recent(path)
         ctype, _ = Gio.content_type_guess(path, None)
-        if path.lower().endswith(VIDEO_EXT) or (ctype or "").startswith("video/"):
-            return self.load_video(path, ctype)
+        if path.lower().endswith(VIDEO_EXT) or (ctype or "").startswith("video/") or self._animated_gif(path):
+            return self.load_video(path, ctype)         # animierte GIFs gehen wie Videos (Meme mit Bewegung)
         try:
             if os.path.isdir(path):
                 return self.fail("Ordner kann Scourge nicht öffnen, nur Dateien. Für ganze Ordner gibt es auf der Startseite den Ordner-Scan.")
@@ -1721,12 +1740,35 @@ class Tab(Gtk.Box):
             return True
         return False
 
+    def on_drop_anywhere(self, target, value, x, y):
+        page = self.stack.get_visible_child_name() if hasattr(self, "stack") else None
+        if page == "editor" and getattr(self.editor, "ops", None) is not None and (
+                self.editor.undo_stack or self.editor.objects):
+            self.notify("Im Editor sind noch Änderungen – erst fertig machen (Speichern/Zurück), dann Datei ablegen")
+            return True
+        if isinstance(value, Gdk.Texture):
+            self.load_bytes(value.save_to_png_bytes().get_data())
+            self.go_main() if hasattr(self, "go_main") else None
+            return True
+        files = value.get_files() if value else []
+        if files and files[0].get_path():
+            self.load_path(files[0].get_path())
+            return True
+        return False
+
     def on_edit(self, *_):
         if self.image is not None and self.doc is None:
             self.editor.open(self.image, video=self.video, info=self.video_info)
             self.stack.set_visible_child_name("editor")
             self.editor.canvas.grab_focus()
 
+
+    def open_in_editor(self, img):
+        """Ein PIL-Bild direkt im Meme-Editor öffnen (z. B. aus den Vorlagen)."""
+        self.editor.open(img)
+        self.stack.set_visible_child_name("editor")
+        self.editor.canvas.grab_focus()
+        self.on_page_changed()
 
     def leave_editor(self):
         self.editor.pause()  # Videos laufen nur im Bearbeiten-Modus
@@ -1972,6 +2014,7 @@ class Scourge(Gtk.Application):
         from recorder import RECORDER_CSS
         from studio import STUDIO_CSS
         from compress import COMPRESS_CSS
+        from memetpl import TPL_CSS
         from convert import CONVERT_CSS
         from player import PLAYER_CSS
         css = FALLBACK_COLORS
@@ -1992,7 +2035,7 @@ class Scourge(Gtk.Application):
             from swipe import CSS as SWIPE_CSS
         except ImportError:
             SWIPE_CSS = ""
-        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + COMPRESS_CSS + CONVERT_CSS + PLAYER_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
+        self.css.load_from_string(css + APP_CSS + EDITOR_CSS + meta.META_CSS + VIEWER_CSS + HOME_CSS + CUTTER_CSS + RECORDER_CSS + STUDIO_CSS + COMPRESS_CSS + TPL_CSS + CONVERT_CSS + PLAYER_CSS + glass.GLASS_CSS + chrome.CSS + CHROME_CSS + SUITE_CSS + DRAWER_CSS + PUBLISH_CSS + SWIPE_CSS)
         for tab in self.tabs():
             if tab.image is not None:
                 tab.swatch.queue_draw()

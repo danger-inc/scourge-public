@@ -15,6 +15,32 @@ MIX_NAME = "scourge_rec_mix"
 CAM_TITLE = "scourge-kamera"
 
 
+# ---------------------------------------------------------------- Umgebung
+WLROOTS = ("hyprland", "sway", "river", "labwc", "wayfire", "niri", "dwl", "qtile", "mango", "scroll")
+
+
+def environment():
+    """Was kann diese Arbeitsumgebung? -> (Art, Hinweis). Art: "ok", "maybe" (unbekannte Wayland-Umgebung, einfach
+    versuchen) oder "no" (geht mit wf-recorder nicht; der Hinweis nennt, was stattdessen hilft)."""
+    if os.name == "nt":
+        return "no", ("Unter Windows nimmt Scourge den Bildschirm nicht selbst auf. Mit Windows+Alt+R (Xbox Game Bar) oder "
+                      "dem Snipping-Tool geht es; die Aufnahme lässt sich danach hier im Schnitt öffnen.")
+    desk = (os.environ.get("XDG_CURRENT_DESKTOP", "") + ":" + os.environ.get("XDG_SESSION_DESKTOP", "")
+            + ":" + os.environ.get("DESKTOP_SESSION", "")).lower()
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or os.environ.get("SWAYSOCK") or any(w in desk for w in WLROOTS):
+        return "ok", ""
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return "no", ("Bildschirmaufnahme braucht eine Wayland-Sitzung mit wlroots (Hyprland, Sway …). Unter X11 nimm "
+                      "OBS Studio oder SimpleScreenRecorder und öffne die Datei danach hier im Schnitt.")
+    if "gnome" in desk:
+        return "no", ("GNOME hat die Aufnahme eingebaut: Strg+Umschalt+Alt+R startet und stoppt sie, die Datei liegt "
+                      "danach unter Videos/Bildschirmaufnahmen. Öffne sie hier im Schnitt.")
+    if "kde" in desk or "plasma" in desk:
+        return "no", ("KDE Plasma hat die Aufnahme in Spectacle (Umschalt+Druck, dann „Bildschirmaufnahme“). Die Datei lässt "
+                      "sich danach hier im Schnitt öffnen.")
+    return "maybe", ""
+
+
 # ---------------------------------------------------------------- Audio
 def _pactl(*args):
     try:

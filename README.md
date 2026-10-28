@@ -89,6 +89,10 @@ are real pdf annotations and remain editable in other pdf programs. scourge itse
 drag to reorder, insert or append pdfs, extract, split); a saved signature you place with one click; fill in forms
 (text, check boxes, lists); real redaction (marked areas become part of a flattened page, the text underneath is gone);
 password protection; ocr for scans (needs `tesseract`). every page change can be undone with ctrl+z.
+* **meme editor:** text on top/bottom, free text, pen, crop with ratios, rotate/flip, "cut out" (make a plain background transparent, no ai) and animated gifs as memes. save your own meme templates and open them with one click.
+* **gradients & ascii:** colour gradients (linear, radial, conic, mesh) with undo, your own saved looks, and "set as wallpaper" (awww, swww, gnome, kde, xfce, swaybg, feh). images as ascii art.
+* **compress images:** whole folders, quality or target size, webp/avif, file names by template (`{name}`, `{nr}`, `{datum}`), scale in percent; originals are never overwritten.
+* **language:** english or german (gear → language); without a setting scourge follows the system language.
 * **screen recording:** whole screen, an area or a window; sound from the system, the microphone or both mixed;
 countdown, auto stop timer, an optional round webcam bubble and a highlight ring around the mouse pointer (the ring needs
 `gtk4-layer-shell`; clicks cannot be detected without input permissions).
@@ -146,6 +150,8 @@ and simply remain inactive on other environments.
 **gi typelibs:** gtk-4.0, gst-1.0 (gstreamer), poppler-0.18
 **gstreamer plugins:** base, good, libav (for video playback)
 **external tools:** ffmpeg, wl-clipboard, poppler-utils (pdftotext/pdfimages), qpdf
+
+**optional:** `tesseract` (+ language data, e.g. `tesseract-data-deu`) for text recognition (ocr) in scanned pdfs, `gtk4-layer-shell` for the mouse ring while recording. the installer offers both.
 
 * **debian/ubuntu/mint:** `python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-gst-plugins-base-1.0 gir1.2-poppler-0.18 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav python3-pil python3-numpy python3-lxml ffmpeg wl-clipboard poppler-utils qpdf`
 * **fedora:** `python3-gobject python3-cairo gtk4 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugin-libav poppler-glib python3-pillow python3-numpy python3-lxml wl-clipboard ffmpeg-free poppler-utils qpdf`

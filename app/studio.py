@@ -3,7 +3,7 @@
 #  - ASCII: Bild hochladen und als ASCII-Kunst ausgeben (Text, ANSI, PNG)
 # Gerechnet wird mit numpy im Hintergrund; Farben werden in OKLab gemischt, damit keine
 # matschigen Grautöne in der Mitte entstehen.
-import datetime, io, os, re, subprocess, threading
+import copy, datetime, io, json, os, re, subprocess, threading, time
 import chrome as ch
 
 import numpy as np
@@ -22,6 +22,30 @@ def _theme_text():
         return istheme.resolve()[0]
     except ImportError:
         return open(MATUGEN_CSS).read()
+
+
+STATE_FILE = os.path.expanduser("~/.config/scourge/studio-verlauf.json")      # zuletzt bearbeiteter Verlauf (Wiederherstellen)
+PRESET_FILE = os.path.expanduser("~/.config/scourge/verlauf-vorlagen.json")  # eigene gespeicherte Verläufe
+WALL_OUT = os.path.expanduser("~/Pictures/Verlaeufe")                        # hier landen Verläufe, die als Hintergrund gesetzt werden
+
+
+def _read_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _write_json(path, data):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 STUDIO_CSS = """
@@ -565,7 +589,11 @@ class Panel(Gtk.Box):
         self.show_result(res)
 
     def save_dialog(self, title, name, done, folder="~/Pictures"):
-        folder = os.path.expanduser(folder)
+        try:
+            import settings_menu
+            folder = settings_menu.folder("pic_dir", folder) if folder == "~/Pictures" else os.path.expanduser(folder)
+        except Exception:
+            folder = os.path.expanduser(folder)
         os.makedirs(folder, exist_ok=True)
         dlg = Gtk.FileDialog(title=title, initial_name=name, initial_folder=Gio.File.new_for_path(folder))
 
@@ -604,8 +632,28 @@ class GradientPanel(Panel):
                   "soft": 0.45, "warp": 0.35, "grain": 0.12, "vignette": 0.0, "smooth": True, "seed": 7}
         mon = self.monitor_size()
         self.W, self.H = mon
+        self.hist, self.redo_stack = [], []
+        self._hist_key, self._hist_t = None, 0.0
+        self._loading = False
+        self._save_id = 0
+        self.presets = _read_json(PRESET_FILE, [])
+        saved = _read_json(STATE_FILE, None)                 # genau da weitermachen, wo man aufgehört hat
+        if isinstance(saved, dict) and isinstance(saved.get("p"), dict):
+            try:
+                self.p.update({k: v for k, v in saved["p"].items() if k in self.p})
+                self.p["colors"] = [c for c in self.p["colors"] if re.fullmatch(r"#[0-9a-fA-F]{6}", str(c))][:8]
+                if len(self.p["colors"]) < 2:
+                    self.p["colors"] = list(PALETTES[0][1])
+                self.W = max(16, min(16384, int(saved.get("W", self.W))))
+                self.H = max(16, min(16384, int(saved.get("H", self.H))))
+            except (TypeError, ValueError):
+                self.p["colors"] = list(PALETTES[0][1])
         self.build()
         self.schedule(10)
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self.on_key)
+        self.add_controller(keys)
 
     def monitor_size(self):
         try:
@@ -619,6 +667,30 @@ class GradientPanel(Panel):
             return 2560, 1440
 
     def build(self):
+        self.scales = {}
+        # Rückgängig & eigene Verläufe
+        c = self.card("Rückgängig & eigene Verläufe")
+        row = Gtk.Box(spacing=6)
+        self.undo_btn = self.button("󰕌  Rückgängig", self.undo, "Strg+Z")
+        self.redo_btn = self.button("󰑎  Wiederholen", self.redo, "Strg+Umschalt+Z")
+        row.append(self.undo_btn); row.append(self.redo_btn)
+        c.append(row)
+        row = Gtk.Box(spacing=6)
+        self.preset_name = Gtk.Entry(placeholder_text="Name für diesen Verlauf", hexpand=True)
+        self.preset_name.add_css_class("pb")
+        self.preset_name.connect("activate", lambda *_: self.save_preset())
+        row.append(self.preset_name)
+        row.append(self.button("󰆓  speichern", self.save_preset, "Diesen Verlauf als eigene Vorlage merken"))
+        c.append(row)
+        self.preset_box = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=4, min_children_per_line=2,
+                                      column_spacing=2, row_spacing=2, homogeneous=True)
+        c.append(self.preset_box)
+        n = Gtk.Label(label="Der letzte Stand bleibt beim nächsten Start erhalten.", xalign=0, wrap=True)
+        n.add_css_class("note")
+        c.append(n)
+        self.refresh_presets()
+        self._update_hist_buttons()
+
         # Farben
         c = self.card("Farben")
         self.stops = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=8, min_children_per_line=4,
@@ -657,18 +729,18 @@ class GradientPanel(Panel):
         c.append(fb)
 
         c = self.card("Form")
-        self.seg(c, self.KINDS, self.p["kind"], self.set_kind)
-        self.w_angle, _ = self.slider(c, "Winkel", 0, 360, self.p["angle"], lambda v: self.set("angle", v), 1, "{:.0f}°", 0)
-        self.w_cx, _ = self.slider(c, "Mitte waagerecht", 0, 1, self.p["cx"], lambda v: self.set("cx", v))
-        self.w_cy, _ = self.slider(c, "Mitte senkrecht", 0, 1, self.p["cy"], lambda v: self.set("cy", v))
-        self.w_soft, _ = self.slider(c, "Weichheit / Größe", 0, 1, self.p["soft"], lambda v: self.set("soft", v))
+        self.kind_btns = self.seg(c, self.KINDS, self.p["kind"], self.set_kind)
+        self.w_angle, self.scales["angle"] = self.slider(c, "Winkel", 0, 360, self.p["angle"], lambda v: self.set("angle", v), 1, "{:.0f}°", 0)
+        self.w_cx, self.scales["cx"] = self.slider(c, "Mitte waagerecht", 0, 1, self.p["cx"], lambda v: self.set("cx", v))
+        self.w_cy, self.scales["cy"] = self.slider(c, "Mitte senkrecht", 0, 1, self.p["cy"], lambda v: self.set("cy", v))
+        self.w_soft, self.scales["soft"] = self.slider(c, "Weichheit / Größe", 0, 1, self.p["soft"], lambda v: self.set("soft", v))
         self.w_smooth = self.switch_row(c, "Weiche Übergänge", self.p["smooth"], lambda v: self.set("smooth", v))
         self.update_visibility()
 
         c = self.card("Feinschliff")
-        self.slider(c, "Wellen / Verzerrung", 0, 1, self.p["warp"], lambda v: self.set("warp", v))
-        self.slider(c, "Körnung", 0, 1, self.p["grain"], lambda v: self.set("grain", v))
-        self.slider(c, "Vignette", 0, 1, self.p["vignette"], lambda v: self.set("vignette", v))
+        self.scales["warp"] = self.slider(c, "Wellen / Verzerrung", 0, 1, self.p["warp"], lambda v: self.set("warp", v))[1]
+        self.scales["grain"] = self.slider(c, "Körnung", 0, 1, self.p["grain"], lambda v: self.set("grain", v))[1]
+        self.scales["vignette"] = self.slider(c, "Vignette", 0, 1, self.p["vignette"], lambda v: self.set("vignette", v))[1]
         c.append(self.button("󰒝  Neu würfeln (Mesh & Wellen)", self.reseed))
 
         c = self.card("Größe & Export")
@@ -691,9 +763,171 @@ class GradientPanel(Panel):
         row.append(self.button("󰋩  JPG", lambda: self.export("jpg"), "Kleinere Datei, Qualität 95", small=False))
         row.append(self.button("󰆏  Kopieren", self.copy, "In voller Größe in die Zwischenablage", small=False))
         c.append(row)
+        import wallpaper
+        if wallpaper.available():
+            c.append(self.button("󰸉  Als Hintergrundbild setzen", self.set_wallpaper,
+                                 "Erstellt das Bild in Bildschirmgröße (~/Pictures/Verlaeufe) und setzt es als Hintergrund", small=False))
         n = Gtk.Label(label="Farben werden in OKLab gemischt; eine feine Körnung verhindert Streifen.", xalign=0, wrap=True)
         n.add_css_class("note")
         c.append(n)
+
+    # --- Rückgängig / Wiederholen / Wiederherstellen ---
+    def snap(self):
+        return {"p": copy.deepcopy(self.p), "W": self.W, "H": self.H}
+
+    def checkpoint(self, key=None):
+        """Zustand VOR einer Änderung merken. Gleicher Regler kurz hintereinander (Ziehen) = ein Schritt."""
+        if self._loading:
+            return
+        now = time.monotonic()
+        if key is not None and key == self._hist_key and now - self._hist_t < 1.2:
+            self._hist_t = now
+            self._queue_save()
+            return
+        self._hist_key, self._hist_t = key, now
+        self.hist.append(self.snap())
+        del self.hist[:-100]
+        self.redo_stack.clear()
+        self._update_hist_buttons()
+        self._queue_save()
+
+    def _queue_save(self):
+        if self._save_id:
+            GLib.source_remove(self._save_id)
+        self._save_id = GLib.timeout_add(800, self._save_now)
+
+    def _save_now(self):
+        self._save_id = 0
+        _write_json(STATE_FILE, self.snap())
+        return False
+
+    def apply_state(self, st):
+        """Zustand übernehmen und alle Bedienelemente nachziehen."""
+        self._loading = True
+        try:
+            self.p.clear()
+            self.p.update(copy.deepcopy(st["p"]))
+            self.W, self.H = st["W"], st["H"]
+            self.rebuild_stops()
+            for key, scale in self.scales.items():
+                scale.set_value(self.p[key])
+            self.w_smooth.set_active(bool(self.p["smooth"]))
+            if self.p["kind"] in self.kind_btns:
+                self.kind_btns[self.p["kind"]].set_active(True)
+            self.sw.set_value(self.W)
+            self.sh.set_value(self.H)
+            self.update_visibility()
+        finally:
+            self._loading = False
+        self.schedule(10)
+        self._queue_save()
+
+    def undo(self):
+        if not self.hist:
+            return
+        self.redo_stack.append(self.snap())
+        self._hist_key = None
+        self.apply_state(self.hist.pop())
+        self._update_hist_buttons()
+
+    def redo(self):
+        if not self.redo_stack:
+            return
+        self.hist.append(self.snap())
+        self._hist_key = None
+        self.apply_state(self.redo_stack.pop())
+        self._update_hist_buttons()
+
+    def _update_hist_buttons(self):
+        if hasattr(self, "undo_btn"):
+            self.undo_btn.set_sensitive(bool(self.hist))
+            self.redo_btn.set_sensitive(bool(self.redo_stack))
+
+    def on_key(self, ctrl, keyval, code, mods):
+        if not (mods & Gdk.ModifierType.CONTROL_MASK):
+            return False
+        focus = self.get_root().get_focus() if self.get_root() else None
+        if isinstance(focus, (Gtk.Text, Gtk.TextView)):
+            return False
+        k = Gdk.keyval_name(keyval) or ""
+        if k.lower() == "z":
+            (self.redo if mods & Gdk.ModifierType.SHIFT_MASK else self.undo)()
+            return True
+        if k.lower() == "y":
+            self.redo()
+            return True
+        return False
+
+    # --- eigene Verläufe ---
+    def refresh_presets(self):
+        while (c := self.preset_box.get_first_child()):
+            self.preset_box.remove(c)
+        self.preset_box.set_visible(bool(self.presets))
+        for i, pr in enumerate(self.presets):
+            ov = Gtk.Overlay()
+            b = Gtk.Button(tooltip_text=pr["name"])
+            b.add_css_class("palette")
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            strip = Gtk.Picture(content_fit=Gtk.ContentFit.FILL, can_shrink=True)
+            strip.set_size_request(70, 30)
+            strip.add_css_class("studio-pic")
+            strip.set_overflow(Gtk.Overflow.HIDDEN)
+            try:
+                strip.set_paintable(pil_texture(render_gradient(dict(pr["st"]["p"]), 140, 60)))
+            except Exception:
+                pass
+            lab = Gtk.Label(label=pr["name"], ellipsize=3, max_width_chars=10)
+            lab.add_css_class("note")
+            col.append(strip); col.append(lab)
+            b.set_child(col)
+            b.connect("clicked", lambda *_, st=pr["st"]: self.use_preset(st))
+            ov.set_child(b)
+            x = Gtk.Button(label="󰅖", tooltip_text="Gespeicherten Verlauf löschen", halign=Gtk.Align.END, valign=Gtk.Align.START)
+            x.add_css_class("stop-x")
+            x.connect("clicked", lambda *_, i=i: self.delete_preset(i))
+            ov.add_overlay(x)
+            self.preset_box.append(ov)
+
+    def use_preset(self, st):
+        self.checkpoint()
+        self.apply_state(st)
+
+    def delete_preset(self, i):
+        if 0 <= i < len(self.presets):
+            del self.presets[i]
+            _write_json(PRESET_FILE, self.presets)
+            self.refresh_presets()
+
+    def save_preset(self):
+        name = self.preset_name.get_text().strip() or f"Verlauf {len(self.presets) + 1}"
+        self.presets.insert(0, {"name": name[:30], "st": self.snap()})
+        del self.presets[60:]
+        _write_json(PRESET_FILE, self.presets)
+        self.preset_name.set_text("")
+        self.refresh_presets()
+        self.tab.notify(f"„{name}“ gespeichert")
+
+    # --- Hintergrundbild ---
+    def set_wallpaper(self):
+        import wallpaper
+        if not wallpaper.available():
+            return self.tab.notify("Diese Arbeitsumgebung kann Scourge nicht direkt setzen – speichere das Bild und stelle es von Hand ein.")
+        job = self.full()
+        folder = WALL_OUT
+
+        def work():
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, f"verlauf-{stamp()}.png")
+            job().save(path, "PNG", compress_level=6)
+            ok, msg = wallpaper.apply(path)
+            return ok, msg, path
+
+        def done(r):
+            if isinstance(r, Exception):
+                return self.tab.notify(f"Fehler: {r}")
+            ok, msg, path = r
+            self.tab.notify(f"{msg} ({os.path.basename(path)} in ~/Pictures/Verlaeufe)" if ok else msg)
+        self.in_background(work, done, "Hintergrundbild wird erstellt …")
 
     # --- Farben ---
     def rebuild_stops(self):
@@ -715,10 +949,12 @@ class GradientPanel(Panel):
     def color_changed(self, i, b):
         h = rgba_hex(b.get_rgba())
         if i < len(self.p["colors"]) and self.p["colors"][i] != h:
+            self.checkpoint(("color", i))
             self.p["colors"][i] = h
             self.schedule()
 
     def set_colors(self, cols):
+        self.checkpoint()
         self.p["colors"] = cols[:8]
         self.rebuild_stops()
         self.schedule()
@@ -740,22 +976,35 @@ class GradientPanel(Panel):
 
     def randomize(self):
         rng = np.random.default_rng()
+        self.checkpoint()
+        old = self.p["seed"]
+        self._hist_t = 0.0
         self.p["seed"] = int(rng.integers(1 << 30))
-        self.set_colors(random_palette(rng))
+        self.set_colors_quiet(random_palette(rng))
+
+    def set_colors_quiet(self, cols):
+        self.p["colors"] = cols[:8]
+        self.rebuild_stops()
+        self.schedule()
 
     def reverse(self):
         self.set_colors(self.p["colors"][::-1])
 
     def reseed(self):
+        self.checkpoint()
         self.p["seed"] = int(np.random.default_rng().integers(1 << 30))
         self.schedule()
 
     # --- Form ---
     def set(self, key, val):
+        if self.p.get(key) != val:
+            self.checkpoint(("set", key))
         self.p[key] = val
         self.schedule()
 
     def set_kind(self, kind):
+        if self.p["kind"] != kind:
+            self.checkpoint()
         self.p["kind"] = kind
         self.update_visibility()
         self.schedule()
@@ -775,7 +1024,10 @@ class GradientPanel(Panel):
         self.sh.set_value(H)
 
     def size_changed(self):
-        self.W, self.H = int(self.sw.get_value()), int(self.sh.get_value())
+        new = (int(self.sw.get_value()), int(self.sh.get_value()))
+        if new != (self.W, self.H):
+            self.checkpoint(("size",))
+        self.W, self.H = new
         self.schedule()
 
     # --- Vorschau & Export ---
