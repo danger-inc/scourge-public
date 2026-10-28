@@ -1,10 +1,10 @@
-# Gemeinsames Design der ganzen Suite (notist, scourge, filist, datist, mailist, …).
-#   · Auswahl in ~/.config/ist-theme.json: {"theme": "auto" | <Schlüssel>, "mode": "dark" | "light"}
-#     – gilt für alle Apps; eine Änderung in den Einstellungen einer App wirkt live in allen offenen.
-#   · "auto" = Farben des Desktops (matugen, ~/.cache/matugen/colors.css), sonst das Standard-Design.
-#     „mode“ wählt dabei zwischen dunkel und hell; passt die Vorlage nicht, wird das Schema aus
-#     den Farbtönen von matugen abgeleitet.
-#   · picker(...) liefert die Auswahl für die Einstellungen (Karten + Hell/Dunkel).
+# Shared design of the whole suite (notist, scourge, filist, datist, mailist, …).
+#   · choice in ~/.config/ist-theme.json: {"theme": "auto" | <key>, "mode": "dark" | "light"}
+#     – applies to all apps; a change in one app's settings takes effect live in all open ones.
+#   · "auto" = colors of the desktop (matugen, ~/.cache/matugen/colors.css), otherwise the default design.
+#     "mode" picks between dark and light; if the template does not fit, the scheme is derived from
+#     the matugen hues.
+#   · picker(...) provides the choice for the settings (cards + light/dark).
 import colorsys
 import json
 import os
@@ -14,7 +14,7 @@ import time
 CONFIG = os.environ.get("IST_THEME_FILE") or os.path.expanduser("~/.config/ist-theme.json")
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
 
-THEMES = {   # key: (Name, hell?, Hintergrund, Schrift, Akzent, Fläche, Zweitfarbe, Drittfarbe)
+THEMES = {   # key: (name, light?, background, text, accent, surface, second color, third color)
     "nacht": ("Nacht", False, "#0f1417", "#dfe3e7", "#8fcef3", "#1c2023", "#b5c9d7", "#cac1ea"),
     "glut": ("Glut", False, "#1a120d", "#f0dfd7", "#ffb68e", "#271e19", "#e7bea9", "#cdc78f"),
     "wald": ("Wald", False, "#0f1511", "#dde5dc", "#8fd6a0", "#1a221c", "#b7ccb8", "#a3cddb"),
@@ -28,7 +28,7 @@ THEMES = {   # key: (Name, hell?, Hintergrund, Schrift, Akzent, Fläche, Zweitfa
 DEFAULT = "nacht"
 
 
-# ---------- Auswahl lesen / schreiben ----------
+# ---------- read / write the choice ----------
 def load():
     st = {"theme": "auto", "mode": "dark"}
     try:
@@ -55,7 +55,7 @@ def save(theme=None, mode=None, at=None):
     if mode is not None:
         st["mode"] = mode
     if at:
-        st["at"] = at     # gemeinsamer Umschaltzeitpunkt (ohne Wechsel-Animation)
+        st["at"] = at     # shared switch time (without the switch animation)
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     tmp = CONFIG + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -64,8 +64,8 @@ def save(theme=None, mode=None, at=None):
     return st
 
 
-# ---------- Wechsel-Animation (Scanbalken) ----------
-SWIPE_FILE = os.path.join(os.path.dirname(CONFIG), "ist-swipe.json")   # eigene Datei: Regler lösen keinen Designwechsel aus
+# ---------- switch animation (scan bar) ----------
+SWIPE_FILE = os.path.join(os.path.dirname(CONFIG), "ist-swipe.json")   # own file: sliders do not trigger a design change
 
 
 def swipe_cfg():
@@ -102,8 +102,8 @@ def _swipe_script():
 
 
 def switch(theme=None, mode=None):
-    """Design/Modus wechseln – mit Scanbalken-Animation (ist-swipe.py), wenn eingeschaltet und möglich, sonst
-    sofort (alle Fenster zum selben Zeitpunkt). Gibt True zurück, wenn die Animation übernommen hat."""
+    """Switch design/mode – with the scan-bar animation (ist-swipe.py) if enabled and possible, otherwise
+    immediately (all windows at the same moment). Returns True if the animation took over."""
     st = load()
     if (theme is None or theme == st["theme"]) and (mode is None or mode == st["mode"]):
         return False
@@ -125,7 +125,7 @@ def switch(theme=None, mode=None):
     return False
 
 
-# ---------- Farben ----------
+# ---------- colors ----------
 def _rgb(h):
     return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
 
@@ -173,7 +173,7 @@ def luminance(hexcol):
 
 
 def derive(base_css, light):
-    """Hell- bzw. Dunkelschema mit den Farbtönen der Vorlage (matugen liefert nur das Schema, das zum Bild passt)."""
+    """Light or dark scheme with the hues of the template (matugen only delivers the scheme that fits the image)."""
     c = parse(base_css)
     hue = {}
     for k, dflt in (("primary", "#8fcef3"), ("secondary", "#b5c9d7"), ("tertiary", "#cac1ea")):
@@ -193,7 +193,7 @@ def derive(base_css, light):
 
 
 def resolve(state=None):
-    """(css, hell?) für die aktuelle Auswahl."""
+    """(css, light?) for the current choice."""
     st = state or load()
     key = st["theme"]
     if key in THEMES:
@@ -214,7 +214,7 @@ def resolve(state=None):
 
 
 def apply_gtk(light):
-    """GTK-Grundthema (Auswahllisten, Menüs, Rollbalken) passend hell/dunkel."""
+    """GTK base theme (selection lists, menus, scrollbars) matching light/dark."""
     try:
         from gi.repository import Gtk
         Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", not light)
@@ -222,12 +222,12 @@ def apply_gtk(light):
         pass
 
 
-SWITCH_PREP = 0.22      # s vor dem Umschaltzeitpunkt wechseln die Apps unter dem Standbild ihre Farben
+SWITCH_PREP = 0.22      # s before the switch time the apps change their colors under the still image
 
 
 def switch_delay():
-    """Sekunden bis zum gemeinsamen Umschaltzeitpunkt "at" (Epoche) in der Auswahldatei – so wechseln alle
-    Fenster und Leisten im selben Moment. Ohne "at" (oder abgelaufen): 0."""
+    """Seconds until the shared switch time "at" (epoch) in the selection file – so all
+    windows and bars change at the same moment. Without "at" (or expired): 0."""
     try:
         with open(CONFIG, encoding="utf-8") as f:
             at = float(json.load(f).get("at") or 0)
@@ -237,7 +237,7 @@ def switch_delay():
 
 
 def watch(callback):
-    """Ruft callback() auf, wenn die Auswahl geändert wird (auch von einer anderen App aus). Gibt den Monitor zurück."""
+    """Calls callback() when the choice changes (also from another app). Returns the monitor."""
     from gi.repository import Gio, GLib
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     mon = Gio.File.new_for_path(os.path.dirname(CONFIG)).monitor_directory(Gio.FileMonitorFlags.NONE, None)
@@ -252,25 +252,25 @@ def watch(callback):
             import sys
             g = sys.modules.get("glass")
             fade = g.theme_fade_begin() if g and hasattr(g, "theme_fade_begin") else None
-        except Exception:      # noqa: BLE001 – die Überblendung ist Zierde
+        except Exception:      # noqa: BLE001 – the cross-fade is decoration
             fade = None
         callback()
         if fade:
-            fade(at_[0])     # das Standbild blendet erst zum gemeinsamen Zeitpunkt aus – bis dahin ist der Wechsel verdeckt
+            fade(at_[0])     # the still image only fades out at the shared time – until then the switch is covered
         return False
 
     def changed(_m, f, _o, _ev):
         if f.get_basename() == os.path.basename(CONFIG) and not pending[0]:
             d = switch_delay()
             at_[0] = time.time() + d if d > 0 else 0.0
-            # Die Farben werden unter dem Standbild schon VOR dem Zeitpunkt gewechselt (SWITCH_PREP s), damit auch ein
-            # träges Neuladen der Stile (große CSS) nichts mehr verschiebt.
+            # The colors are already changed under the still image BEFORE the time (SWITCH_PREP s), so even a
+            # slow reload of the styles (large CSS) no longer shifts anything.
             pending[0] = GLib.timeout_add(int(max(0.05, d - SWITCH_PREP) * 1000), fire)
     mon.connect("changed", changed)
     return mon
 
 
-# ---------- Auswahl für die Einstellungen ----------
+# ---------- choice for the settings ----------
 PICKER_CSS = """
 button.theme-card { background: none; background-image: none; border: 1px solid alpha(@primary, 0.25);
     border-radius: 6px; padding: 6px; box-shadow: none; color: @foreground; }
@@ -292,7 +292,7 @@ def _swatch(cols):
     sw = Gtk.DrawingArea(content_width=96, content_height=40)
 
     def draw(area, cr, w, h):
-        if not cols:      # automatisch: Regenbogen-Andeutung
+        if not cols:      # automatic: hint of a rainbow
             for i, c in enumerate(("#8fcef3", "#ffb68e", "#8fd6a0", "#ffb0cd")):
                 cr.set_source_rgb(*_rgb(c))
                 cr.rectangle(i * w / 4, 0, w / 4 + 1, h)
@@ -317,9 +317,9 @@ def _swatch(cols):
 
 
 def picker(tr=lambda s: s, on_change=None, columns=5):
-    """Karten für „Automatisch“ + alle Designs und – bei „Automatisch“ – Hell/Dunkel. Speichert sofort in
-    ~/.config/ist-theme.json (alle Apps laden live nach); on_change() danach für App-eigenes Nachladen.
-    tr = Übersetzer der App für die sichtbaren Texte."""
+    """Cards for "Automatic" + all designs and – with "Automatic" – light/dark. Saves immediately in
+    ~/.config/ist-theme.json (all apps reload live); on_change() afterwards for the app's own reload.
+    tr = translator of the app for the visible texts."""
     global _picker_provider
     from gi.repository import Gdk, Gtk
     if _picker_provider is None:

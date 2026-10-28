@@ -1,5 +1,14 @@
 # scourge – Änderungen
 
+## 2.16.0 (2026-10-28)
+- **Aufnahme**: Ton jetzt auch „Beides“ (Systemton und Mikrofon gemischt) mit Mikrofon-Auswahl, Countdown (aus/3/5/10 s) und „Stopp nach“ (1 Minute bis 1 Stunde), optional **Kamera-Blase** (runde Vorschau unten rechts, wird mit aufgenommen) und **Maus hervorheben** (gelber Ring um den Zeiger). „Danach im Schnitt öffnen“ lässt sich abschalten. Die Auswahl wird gemerkt. Der Ring braucht gtk4-layer-shell, Klicks lassen sich ohne Eingabe-Rechte nicht erkennen.
+- **PDF-Seitenleiste** (Knopf links oben oder F9): Miniaturen, Gliederung (Lesezeichen) und alle Suchtreffer mit Textauszug.
+- **Seiten verwalten** (per Miniatur): drehen, löschen, verdoppeln, per Ziehen umsortieren, PDFs einfügen oder ans Ende hängen, Auswahl als neue PDF speichern, PDF in Teile zerlegen. Alles lässt sich mit Strg+Z zurücknehmen (bis zu 12 Schritte), das Original wird vorher gesichert.
+- **Unterschrift**: einmal zeichnen, danach mit dem Werkzeug „Unterschrift“ (S) per Klick auf die Seite setzen (echte PDF-Anmerkung).
+- **Formulare ausfüllen**: Textfelder, Ankreuzfelder und Auswahllisten per Klick; Felder sind blau hinterlegt (abschaltbar).
+- **Schwärzen** (X): Bereiche aufziehen oder „Alle Treffer schwärzen“ bei der Suche; „Endgültig schwärzen“ macht die Seiten zu Bildern, der Inhalt ist wirklich weg.
+- **Passwortschutz** setzen und entfernen; **Texterkennung (OCR)** für gescannte Seiten, wenn tesseract installiert ist.
+
 ## 2.15.0 (2026-10-27)
 - **Dokumente umwandeln** (neue Kachel auf der Startseite): PDFs zusammenfügen (Reihenfolge per ▲▼, pro PDF ein Seitenbereich wie „1-3, 5, 8-“, Bilder werden eigene Seiten), Seiten behalten/löschen/in Einzelseiten oder n-Seiten-Teile teilen/drehen/umkehren, PDF verkleinern sowie PDF ⇄ Bild (PNG/JPG/WebP, wählbare Auflösung) ⇄ Text ⇄ Word/ODT/HTML/Markdown. Word, Excel und PowerPoint gehen mit LibreOffice, Markdown und EPUB mit pandoc; was fehlt, steht oben auf der Seite. Originale bleiben unverändert.
 - **Akku-Warnung**: Fällt der Akku unter 20 % (und noch einmal unter 10 %), kommt eine Meldung – auch wenn Scourge nur im Hintergrund läuft. Abschaltbar im Zahnrad unter „verhalten“.

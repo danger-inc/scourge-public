@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# Hell/Dunkel-Wechsel der ganzen Suite als Scanbalken: Standbild des Bildschirms (grim) als Vollbild-Ebene, darunter
-# wechseln alle Fenster/Leiste/Terminal ihre Farben, dann zieht eine Lichtkante einmal von links nach rechts und
-# legt hinter sich das neue Aussehen frei. Aufruf (meist über istheme.switch):  ist-swipe.py [--theme KEY] [--mode dark|light]
-# Läuft mit LD_PRELOAD=libgtk4-layer-shell.so; bei jedem Fehler wird die Auswahl ohne Animation gespeichert.
+# Light/dark switch of the whole suite as a scan bar: still image of the screen (grim) as a full-screen layer, below it
+# all windows/bar/terminal change their colors, then a light edge sweeps once from left to right and
+# reveals the new look behind it. Usage (mostly via istheme.switch):  ist-swipe.py [--theme KEY] [--mode dark|light]
+# Runs with LD_PRELOAD=libgtk4-layer-shell.so; on any error the choice is saved without animation.
 import fcntl
 import os
 import subprocess
@@ -13,9 +13,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import istheme  # noqa: E402
 
-SETTLE = 0.22        # s zwischen Speichern und Start: Apps, Leiste und Terminal haben unter dem Standbild gewechselt
-ROW = 8              # logische Pixel je Zeile der Kante
-GLOW = 120           # Breite des Nachglühens im neuen Aussehen
+SETTLE = 0.22        # s between saving and start: apps, bar and terminal have switched under the still image
+ROW = 8              # logical pixels per row of the edge
+GLOW = 120           # width of the afterglow in the new look
 
 
 def args():
@@ -45,10 +45,10 @@ def main():
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        return plain(a)        # läuft schon ein Wechsel: nur speichern
+        return plain(a)        # a switch is already running: only save
     shot = os.path.join(tempfile.gettempdir(), "ist-swipe-%d.png" % os.getpid())
     try:
-        grim = subprocess.Popen(["grim", "-l", "0", shot])     # läuft, während GTK noch geladen wird
+        grim = subprocess.Popen(["grim", "-l", "0", shot])     # runs while GTK is still loading
         import gi
         gi.require_version("Gtk", "4.0")
         gi.require_version("Gdk", "4.0")
@@ -86,7 +86,7 @@ def main():
         return c
 
     def ease(t):
-        return 1 - pow(1 - t, 1.8)       # startet gleich zügig, bremst zum Ende
+        return 1 - pow(1 - t, 1.8)       # starts quickly, slows down towards the end
 
     def hash_(x, y):
         import math
@@ -184,7 +184,7 @@ def main():
     def wait_drawn():
         if not st["drawn"]:
             return True
-        # Standbild ist vom Compositor übernommen: jetzt darunter wechseln
+        # still image taken over by the compositor: now switch underneath
         log("drawn")
         GLib.timeout_add(40, lambda: (plain(a), after_save(), False)[2])
         return False
@@ -192,11 +192,11 @@ def main():
     def mapped(*_):
         surf = win.get_surface()
         if surf is not None:
-            surf.set_input_region(cairo.Region())     # Klicks gehen durch
+            surf.set_input_region(cairo.Region())     # clicks pass through
     win.connect("map", mapped)
     sw.add_tick_callback(tick)
     GLib.timeout_add(20, wait_drawn)
-    GLib.timeout_add(int((sec + 6) * 1000), done)      # Sicherung: die Ebene bleibt nie hängen
+    GLib.timeout_add(int((sec + 6) * 1000), done)      # safety net: the layer never gets stuck
     log("present")
     win.present()
     loop.run()

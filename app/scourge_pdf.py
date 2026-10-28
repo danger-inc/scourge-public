@@ -126,6 +126,7 @@ class PdfTab(Gtk.Box):
             return False
         self.path = path
         self.view.load(doc, path)
+        self.view.password = password
         self.stack.set_visible_child_name("pdf")
         self.title = os.path.basename(path)
         self.app.update_label(self)

@@ -85,6 +85,13 @@ background like scourge: `scourge-pdf --daemon`). in the toolbar: write text (fo
 copy, highlight, underline, strikethrough, pen, frame, note, eraser, undo (ctrl+z) and save (ctrl+s, ctrl+shift+s = new
 file). pinch to zoom, click the page number to jump to a page, add your own highlight colors with "+". the annotations
 are real pdf annotations and remain editable in other pdf programs. scourge itself shows only the analysis of a pdf.
+  also: a side bar (F9) with page thumbnails, bookmarks and all search hits; manage pages (rotate, delete, duplicate,
+drag to reorder, insert or append pdfs, extract, split); a saved signature you place with one click; fill in forms
+(text, check boxes, lists); real redaction (marked areas become part of a flattened page, the text underneath is gone);
+password protection; ocr for scans (needs `tesseract`). every page change can be undone with ctrl+z.
+* **screen recording:** whole screen, an area or a window; sound from the system, the microphone or both mixed;
+countdown, auto stop timer, an optional round webcam bubble and a highlight ring around the mouse pointer (the ring needs
+`gtk4-layer-shell`; clicks cannot be detected without input permissions).
 * **open:** the first tile (and ctrl+o) opens images in full screen, plays videos and music (timeline, loop, space
 to play/pause) and sends pdfs to scourge-pdf. everything else goes to the file check.
 * **apps bar:** mouse to the left window edge or click on "scourge" top left – starter for the other apps (see below).

@@ -361,8 +361,34 @@ def _caret_rect(w):
     return w, x, y, h, None
 
 
-class CaretTrail(Gtk.DrawingArea):
+import gi
+
+try:                                       # GTK ≥ 4.14: Spur als GPU-Pfad zeichnen statt als Cairo-Fläche über das ganze Fenster
+    gi.require_version("Gsk", "4.0")
+    from gi.repository import Gsk
+    _CARET_PATH = hasattr(Gsk, "PathBuilder") and hasattr(Gtk.Snapshot, "append_fill")
+except (ValueError, ImportError):
+    _CARET_PATH = False
+
+
+class CaretTrail(Gtk.Widget if _CARET_PATH else Gtk.DrawingArea):
     """Liegt als durchklickbare Ebene über dem Fensterinhalt und zeichnet den Cursor des fokussierten Textfelds."""
+
+    if _CARET_PATH:
+        __gtype_name__ = "IstCaretTrail"
+
+        def do_snapshot(self, snap):
+            if self._cur is None or not self._on:
+                return
+            pb = Gsk.PathBuilder.new()
+            pb.move_to(*self._cur[0])
+            for c in self._cur[1:]:
+                pb.line_to(*c)
+            pb.close()
+            r, g, b, a = self._color
+            col = Gdk.RGBA()
+            col.red, col.green, col.blue, col.alpha = r, g, b, a
+            snap.append_fill(pb.to_path(), Gsk.FillRule.WINDING, col)
 
     def __init__(self, win):
         super().__init__(can_target=False, can_focus=False, hexpand=True, vexpand=True)
@@ -377,7 +403,8 @@ class CaretTrail(Gtk.DrawingArea):
         self._last = 0
         self._poll_id = 0
         self._color = (0.9, 0.9, 0.9, 1.0)
-        self.set_draw_func(self._draw)
+        if not _CARET_PATH:
+            self.set_draw_func(self._draw)
         self.set_opacity(0)                    # leer = unsichtbar: eine leere Vollfenster-Ebene kostet im Glas-Modus beim Scrollen Frames
         self.connect("map", self._start)
         self.connect("unmap", self._stop)

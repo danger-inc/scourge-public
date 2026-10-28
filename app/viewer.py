@@ -14,6 +14,8 @@ gi.require_version("PangoCairo", "1.0")
 gi.require_version("Graphene", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gtk, Pango, PangoCairo
 
+from pdfextra import ExtraMixin
+
 try:
     import glass
 except ImportError:      # ohne Cursor-Ebene zeichnet der Direkt-Text seinen Cursor selbst
@@ -59,18 +61,21 @@ GAP = 14
 TOOLS = (("text", "󰊄", "text schreiben", "t"), ("select", "󰇀", "text auswählen", "v"),
          ("highlight", "󰸱", "markieren", "h"), ("underline", "󰊇", "unterstreichen", "u"),
          ("strike", "󰊀", "durchstreichen", "d"), ("ink", "󰏪", "stift", "p"), ("rect", "󰹟", "rahmen", "r"),
-         ("note", "󰆉", "notiz", "n"), ("erase", "󰇾", "radierer", "e"))
+         ("note", "󰆉", "notiz", "n"), ("sign", "󰷻", "unterschrift", "s"), ("redact", "󰈉", "schwärzen", "x"),
+         ("erase", "󰇾", "radierer", "e"))
 TOOL_TIPS = {"select": "Text auswählen, kopieren, Links folgen", "highlight": "Text mit dem Textmarker markieren",
              "underline": "Text unterstreichen", "strike": "Text durchstreichen",
              "text": "Text (Schrift) auf die Seite setzen – Klick auf vorhandenen Text bearbeitet ihn",
              "ink": "Freihand zeichnen", "rect": "Rahmen aufziehen", "note": "Notiz anheften",
+             "sign": "Gespeicherte Unterschrift per Klick auf die Seite setzen (Größe: Breite)",
+             "redact": "Bereiche aufziehen, die endgültig geschwärzt werden sollen",
              "erase": "Anmerkung anklicken, um sie zu entfernen"}
 MARKUP = ("highlight", "underline", "strike")
 CUSTOM_COLORS = os.path.expanduser("~/.config/scourge/pdf-colors.json")
 COLORS = (("gelb", "#ffd400"), ("grün", "#62d26f"), ("blau", "#3d8bff"), ("rot", "#e5322d"),
           ("pink", "#ff5fc4"), ("schwarz", "#1b1b1b"))
 FONTS = (("Sans", "Sans"), ("Serif", "Serif"), ("Mono", "Monospace"))
-DEFAULT_COLOR = {"highlight": "#ffd400", "underline": "#e5322d", "strike": "#e5322d", "text": "#1b1b1b",
+DEFAULT_COLOR = {"sign": "#1a3d8f", "highlight": "#ffd400", "underline": "#e5322d", "strike": "#e5322d", "text": "#1b1b1b",
                  "ink": "#3d8bff", "rect": "#e5322d", "note": "#ffd400"}
 
 
@@ -358,7 +363,7 @@ class PageWidget(Gtk.Widget):
         self._draw(self, cr, w, h, self._i)
 
 
-class PdfView(Gtk.Box):
+class PdfView(ExtraMixin, Gtk.Box):
     def __init__(self, editable=False, notify=None, on_saved=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.editable = editable
@@ -438,7 +443,10 @@ class PdfView(Gtk.Box):
         self.scroll.set_child(self.pages)
         self.scroll.get_child().set_scroll_to_focus(False)   # Klick auf die Seite darf die Ansicht nicht verschieben
         self.set_focusable(True)
-        self.append(self.scroll)
+        body = Gtk.Box(vexpand=True)
+        body.append(self.scroll)
+        self.append(body)
+        self.extra_init(body)
         va = self.scroll.get_vadjustment()
         va.connect("value-changed", lambda *_: self.update())
         self.scroll.get_hadjustment().connect("changed", lambda *_: self.fit and GLib.idle_add(self._refit))
@@ -708,7 +716,8 @@ class PdfView(Gtk.Box):
                 self.tool_btns[key].set_active(True)
             self._redraw_all()
         cursor = {"select": "text", "highlight": "text", "underline": "text", "strike": "text", "text": "text",
-                  "ink": "crosshair", "rect": "crosshair", "note": "copy", "erase": "default"}[key]
+                  "ink": "crosshair", "rect": "crosshair", "note": "copy", "erase": "default", "sign": "copy",
+                  "redact": "crosshair"}[key]
         for a in self.areas:
             a.set_cursor_from_name(cursor)
         if self.editable:
@@ -726,6 +735,8 @@ class PdfView(Gtk.Box):
             self._edit_style()
         elif self.tool in ("ink", "rect"):
             self.width = spin.get_value()
+        elif self.tool == "sign":
+            self.sign_width = spin.get_value()
 
     def _on_font(self, dd, _pspec):
         self.font = FONTS[dd.get_selected()][1]
@@ -740,7 +751,7 @@ class PdfView(Gtk.Box):
         cur = self.colors.get(self.tool)
         for hexcol, b in self.color_btns.items():
             (b.add_css_class if hexcol == cur else b.remove_css_class)("active")
-        sized = self.tool in ("text", "ink", "rect")
+        sized = self.tool in ("text", "ink", "rect", "sign")
         self.font_dd.set_visible(self.tool == "text")
         want = next((k for k, (_, f) in enumerate(FONTS) if f == self.font), 0)
         if self.font_dd.get_selected() != want:
@@ -751,6 +762,10 @@ class PdfView(Gtk.Box):
             self.size_lbl.set_label("pt")
             self.size_spin.set_range(6, 72)
             self.size_spin.set_value(self.font_size)
+        elif self.tool == "sign":
+            self.size_lbl.set_label("breite")
+            self.size_spin.set_range(60, 400)
+            self.size_spin.set_value(self.sign_width)
         elif sized:
             self.size_lbl.set_label("stärke")
             self.size_spin.set_range(1, 12)
@@ -932,6 +947,7 @@ class PdfView(Gtk.Box):
         self.scroll.get_vadjustment().set_value(0)
         self._sync_tools()
         GLib.idle_add(self._refit)
+        self.extra_loaded()
 
     def page(self, i):
         if i not in self.page_objs:
@@ -1196,6 +1212,7 @@ class PdfView(Gtk.Box):
                     self.hits.append((i, (r.x1, h - max(r.y1, r.y2), r.x2, h - min(r.y1, r.y2))))  # unten-links -> oben-links
         self.done = {}
         self._gen += 1
+        self.hits_changed(text)
         if self.hits:
             self.step_hit(1)
         else:
@@ -1424,6 +1441,10 @@ class PdfView(Gtk.Box):
     def undo(self):
         if self.edit:                    # beim Tippen: Eingabe verwerfen
             return self.cancel_edit()
+        if self.tool == "redact" and self.redact_undo():
+            return
+        if not self.undo_stack and self.struct_undo():
+            return
         if self.undo_stack:
             ops = self.undo_stack.pop()
             self._apply(ops, True)
@@ -1432,6 +1453,8 @@ class PdfView(Gtk.Box):
             self._sync_tools()
 
     def redo(self):
+        if not self.redo_stack and self.struct_redo and self.struct_undo(redo=True):
+            return
         if self.redo_stack:
             ops = self.redo_stack.pop()
             self._apply(ops, False)
@@ -1568,6 +1591,8 @@ class PdfView(Gtk.Box):
             self.live = (i, "ink", [(px, py)])
         elif t == "rect":
             self.live = (i, "rect", (px, py, px, py))
+        elif t == "redact":
+            self.live = (i, "redact", (px, py, px, py))
 
     def _drag_update(self, g, dx, dy, i):
         if not self._drag:
@@ -1586,6 +1611,8 @@ class PdfView(Gtk.Box):
                 pts.append((px, py))
         elif t == "rect" and self.live:
             self.live = (i, "rect", (sx, sy, px, py))
+        elif t == "redact" and self.live:
+            self.live = (i, "redact", (sx, sy, px, py))
         self.areas[i].queue_draw()
 
     def _drag_end(self, g, dx, dy, i):
@@ -1600,7 +1627,7 @@ class PdfView(Gtk.Box):
             if click:
                 self.sel = None
                 self._redraw_all()
-                if not self._follow_link(i, px, py):
+                if not (self.form_click(i, px, py) or self._follow_link(i, px, py)):
                     hit = [a for a, _ in self.annots_at(i, px, py)
                            if a.get_annot_type() in (_poppler().AnnotType.FREE_TEXT, _poppler().AnnotType.TEXT)]
                     if hit and self.editable:
@@ -1644,6 +1671,15 @@ class PdfView(Gtk.Box):
                 a = self._make_rect(i, box, self.colors["rect"], self.width)
                 self._push([("add", i, a)])
                 self._rerender(i)
+            else:
+                self.areas[i].queue_draw()
+        elif t == "sign" and click:
+            self.place_signature(i, px, py)
+        elif t == "redact" and self.live:
+            box = self.live[2]
+            self.live = None
+            if abs(box[2] - box[0]) > 3 and abs(box[3] - box[1]) > 3:
+                self.redact_add(i, box)
             else:
                 self.areas[i].queue_draw()
         elif t == "erase" and click:
@@ -1992,7 +2028,7 @@ class PdfView(Gtk.Box):
         rng = self.sel_range()
         return bool((rng and rng[0] == i) or (self.live and self.live[0] == i) or (self.edit and self.edit["i"] == i)
                     or (self.ghost and self.ghost[0] == i and self.tool == "text")
-                    or (self.hover and self.hover[0] == i))
+                    or (self.hover and self.hover[0] == i) or self.extra_active(i))
 
     def _draw_overlay(self, area, cr, w, h, i):
         z = self.zoom
@@ -2005,7 +2041,7 @@ class PdfView(Gtk.Box):
             for x1, y1, x2, y2 in self.sel_lines(i, rng[1], rng[2]):
                 cr.rectangle(x1 * z, y1 * z, (x2 - x1) * z, (y2 - y1) * z)
             cr.fill()
-        if self.live and self.live[0] == i:
+        if self.live and self.live[0] == i and self.live[1] != "redact":
             kind, data = self.live[1], self.live[2]
             r, g, b = _rgb(self.colors[kind])
             cr.set_source_rgb(r, g, b)
@@ -2025,6 +2061,7 @@ class PdfView(Gtk.Box):
             self._draw_edit(cr, z)
         elif self.ghost and self.ghost[0] == i and self.tool == "text":
             self._draw_ghost(cr, z)
+        self.extra_draw(cr, z, i)
         if self.hover and self.hover[0] == i:
             x1, y1, x2, y2 = self.hover[1]
             cr.set_source_rgba(0.9, 0.2, 0.2, 0.9)
@@ -2059,6 +2096,8 @@ class PdfView(Gtk.Box):
             self.set_zoom(self.zoom / 1.25)
         elif c and k == "0":
             self.fit_width()
+        elif k == "F9":
+            self.toggle_side()
         elif c and k == "f":
             self.search.grab_focus()
         elif c and k == "g":
