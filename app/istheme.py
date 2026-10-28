@@ -217,7 +217,12 @@ def apply_gtk(light):
     """GTK base theme (selection lists, menus, scrollbars) matching light/dark."""
     try:
         from gi.repository import Gtk
-        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", not light)
+        st = Gtk.Settings.get_default()
+        if st.find_property("gtk-interface-color-scheme") is not None:      # GTK ≥ 4.20: die alte Eigenschaft warnt
+            st.set_property("gtk-interface-color-scheme",
+                            Gtk.InterfaceColorScheme.LIGHT if light else Gtk.InterfaceColorScheme.DARK)
+        else:
+            st.set_property("gtk-application-prefer-dark-theme", not light)
     except Exception:
         pass
 

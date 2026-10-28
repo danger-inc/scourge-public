@@ -64,8 +64,8 @@ if (Test-Path "$Src\app\scourge.py") {
     # Python-Pakete (ytmusicapi, yt-dlp …) kommen per pip in <App>\pylibs; Anmeldung/Zustand bleiben bei Updates erhalten.
     $App = @{ Name = 'musicalist'; Dir = "$Share\rice-apps\music"; Main = 'musicd.py'; Args = '--show'; Icon = 'musicalist.ico'
               Fonts = $null
-              Keep = @('auth', 'state.json', 'settings.json', 'history.json', 'plays.json')
-              Pip = @('ytmusicapi>=1.10', 'yt-dlp', 'yt-dlp-ejs', 'requests')
+              Keep = @('auth', 'state.json', 'settings.json', 'history.json', 'plays.json', 'listens.json', 'offline_pins.json')
+              Pip = @('ytmusicapi>=1.10', 'yt-dlp', 'yt-dlp-ejs', 'requests', 'mutagen')
               Pkgs = $Base + @('python-pip', 'mpv', 'nodejs', 'python-certifi', 'python-pillow', 'python-numpy') }
     $Copy = {
         Copy-Item "$Src\app\music\*" $App.Dir -Recurse -Force
