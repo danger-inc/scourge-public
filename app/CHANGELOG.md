@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.17.1 (2026-10-28)
+- **Englisch** wird jetzt auch in der veröffentlichten Fassung mitgeliefert (die Übersetzungstabelle fehlte in 2.17.0).
+
 ## 2.17.0 (2026-10-28)
 - **English**: die Oberfläche gibt es jetzt auch auf Englisch (Zahnrad → sprache: automatisch, Deutsch oder English; ohne Einstellung folgt Scourge der Systemsprache). Übersetzt sind die Startseite, Aufnahme, Meme-Editor, Studio, Komprimieren, Umwandeln, Schnitt, PDF-Editor, Einstellungen und die Datei-Prüfung; einige Spezialseiten (Hyprland, Systemeinstellungen) bleiben vorerst Deutsch.
 - **Bilder komprimieren**: Ganze Ordner (auch mit Unterordnern) ziehen oder wählen, Dateinamen nach Vorlage (`{name}`, `{nr}`, `{datum}`, `{breite}`, `{höhe}`), Verkleinern in Prozent (75/50/25 %) zusätzlich zur längsten Seite, einzelne Bilder per ✕ aus der Liste nehmen. Originale werden nie überschrieben.
