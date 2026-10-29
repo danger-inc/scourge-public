@@ -416,12 +416,23 @@ class CaretTrail(Gtk.Widget if _CARET_PATH else Gtk.DrawingArea):
         if not _CARET_PATH:
             self.set_draw_func(self._draw)
         self.set_opacity(0)                    # leer = unsichtbar: eine leere Vollfenster-Ebene kostet im Glas-Modus beim Scrollen Frames
+        self._wired = False
         self.connect("map", self._start)
         self.connect("unmap", self._stop)
 
     # --- Abfrage des fokussierten Felds ------------------------------------------------------------------
+    # Der 40-ms-Takt läuft nur, solange ein Textfeld den Fokus hat; sonst ruht er und Fokus-/Aktivwechsel des Fensters wecken ihn.
     def _start(self, *_):
+        win = self._win()
+        if win is not None and not self._wired:
+            self._wired = True
+            win.connect("notify::focus-widget", self._wake)
+            win.connect("notify::is-active", self._wake)
         if not self._poll_id:
+            self._poll_id = GLib.timeout_add(40, self._poll)
+
+    def _wake(self, *_):
+        if self.get_mapped() and not self._poll_id:
             self._poll_id = GLib.timeout_add(40, self._poll)
 
     def _stop(self, *_):
@@ -451,12 +462,13 @@ class CaretTrail(Gtk.Widget if _CARET_PATH else Gtk.DrawingArea):
 
     def _follow_on(self):
         """Solange ein Feld den Fokus hat, jedes Bild (statt alle 40 ms) abfragen – der Cursor hinkt sonst beim Moduswechsel."""
+        self._follow_until = GLib.get_monotonic_time() + 600000     # nur kurz nach Fokus/Eingabe jedes Bild, danach 40-ms-Takt
         if not getattr(self, "_following", False):
             self._following = True
             self.add_tick_callback(self._follow)
 
     def _follow(self, *_):
-        if self._widget is None or not self._poll_id:
+        if self._widget is None or not self._poll_id or GLib.get_monotonic_time() > getattr(self, "_follow_until", 0):
             self._following = False
             return GLib.SOURCE_REMOVE
         self._poll()
@@ -465,6 +477,7 @@ class CaretTrail(Gtk.Widget if _CARET_PATH else Gtk.DrawingArea):
     def _kick(self):
         if self._poll_id:
             self._poll()
+            self._follow_on()
         return False
 
     def _release(self):
@@ -487,7 +500,8 @@ class CaretTrail(Gtk.Widget if _CARET_PATH else Gtk.DrawingArea):
         if w is None or not _caret_widget(w) or not w.get_mapped() or w.get_native() is not win.get_native():
             if self._widget is not None:
                 self._release()
-            return True
+            self._poll_id = 0              # kein Textfeld im Fokus: Takt ruht bis zum nächsten Fokuswechsel
+            return False
         old = self._widget() if self._widget else None
         if old is not w:
             if old is not None:
