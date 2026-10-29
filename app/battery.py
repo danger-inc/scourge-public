@@ -35,7 +35,8 @@ def warn(app, pct):
     title = f"Akku bei {pct} %"
     body = "Bitte das Netzteil anschließen." if pct > 10 else "Gleich ist Schluss – jetzt das Netzteil anschließen!"
     if shutil.which("notify-send"):
-        subprocess.Popen(["notify-send", "-a", "Scourge", "-u", "critical", "-i", "battery-caution",
+        subprocess.Popen(["notify-send", "-a", "Scourge", "-u", "critical" if pct <= 10 else "normal", "-t", "4000",
+                          "-i", "battery-caution",
                           "-h", "string:x-canonical-private-synchronous:scourge-battery", title, body],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
