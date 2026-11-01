@@ -698,6 +698,285 @@ def enable_caret():
     GLib.timeout_add(400, _caret_scan)
 
 
+# ---------- Scroll-Ende: Schattierung aus Terminal-Zeichen ----------
+# Wer am Ende einer Seite weiterscrollt, sieht aus der Kante einen Verlauf aus ░ ▒ ▓ █ aufsteigen, am Mauszeiger am
+# höchsten. Die Liste selbst bewegt sich nicht. Läuft ohne Überschwingen aus. Eine Ebene je Fenster (wie der Cursor),
+# Scroll-Ereignisse werden im Fenster abgefangen, das ScrolledWindow unter dem Zeiger wird per pick() gesucht.
+# Aus: IST_NO_ENDFX=1, Energiesparen (istheme.eco) oder "scroll_end": false in ~/.config/rice-apps/settings.json.
+ENDFX_MAX = 110.0          # Zugweg (px), an dem der Widerstand fast voll ist
+ENDFX_IDLE = 0.11          # s ohne Scroll-Ereignis = losgelassen
+_endfx_cfg_cache = [0.0, True]
+
+
+def endfx_on():
+    c = _endfx_cfg_cache
+    now = time.monotonic()
+    if now - c[0] > 0.5:
+        c[0] = now
+        c[1] = bool(load().get("scroll_end", True)) and not _eco()
+    return c[1]
+
+
+try:
+    from gi.repository import Pango
+except ImportError:
+    Pango = None
+
+
+class EndFx(Gtk.Widget):
+    __gtype_name__ = "IstEndFx"
+
+    def __init__(self, win):
+        super().__init__(can_target=False, can_focus=False, hexpand=True, vexpand=True)
+        self._win = weakref.ref(win)
+        self._sw = None                        # das gezogene ScrolledWindow (nur während des Zugs)
+        self._x = 0.0                          # Zugweg in px (>= 0)
+        self._dir = 1                          # 1 = unteres Ende, -1 = oberes
+        self._px = 0.5                         # Zeigerlage 0..1 im ScrolledWindow
+        self._pos = None
+        self._last_ev = 0.0
+        self._t = 0
+        self._ticking = False
+        self._tid = 0
+        self.connect("unmap", self._reset)
+        self._cw = 0.0
+        self._lh = 16.0
+        self._lay = {}
+        self.set_opacity(0)
+        wr = weakref.ref(self)
+        mot = Gtk.EventControllerMotion()
+        mot.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        mot.connect("motion", lambda c, x, y: wr() and wr()._motion(x, y))
+        win.add_controller(mot)
+        sc = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+        sc.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        sc.connect("scroll", lambda c, dx, dy: wr()._scroll(c, dx, dy) if wr() else False)
+        win.add_controller(sc)
+        self._sc = sc
+
+    def _motion(self, x, y):
+        self._pos = (x, y)
+
+    @staticmethod
+    def _can_move(sw, dy):
+        adj = sw.get_vadjustment()
+        v, lo, up, pg = adj.get_value(), adj.get_lower(), adj.get_upper(), adj.get_page_size()
+        return (dy > 0 and v < up - pg - 0.5) or (dy < 0 and v > lo + 0.5)
+
+    def _scroll(self, ctrl, dx, dy):
+        win = self._win()
+        dbg = os.path.exists(os.path.expanduser("~/.cache/endfx-debug"))
+
+        def log(*a):
+            if dbg:
+                with open("/tmp/endfx.log", "a") as f:
+                    f.write(" ".join(str(x) for x in a) + "\n")
+        ev = ctrl.get_current_event()
+        if ev is not None:                              # Lage direkt aus dem Ereignis (ohne vorherige Mausbewegung)
+            try:
+                p = ev.get_position()
+                p = p[1:] if len(p) == 3 else p
+                tx, ty = win.get_surface_transform()
+                if math.isfinite(p[0]) and math.isfinite(p[1]):         # Scroll-Ereignisse melden oft nan
+                    self._pos = (p[0] - tx, p[1] - ty)
+            except Exception as e:      # noqa: BLE001
+                log("pos-fehler", repr(e))
+        log(type(win).__name__ if win else None, "dy", dy, "dx", dx, "pos", self._pos, "on", endfx_on())
+        if win is None or dy == 0 or abs(dy) < abs(dx) or self._pos is None or not endfx_on():
+            return False
+        unit = 6.0 if ctrl.get_unit() == Gdk.ScrollUnit.WHEEL else 0.5
+        d = min(40.0, abs(dy) * unit)
+        cur = self._sw
+        if self._x > 1 and cur is not None:             # läuft schon: weiterziehen oder zurückgehen
+            if (dy > 0) == (self._dir > 0):
+                self._pull(d)
+            else:
+                self._x = max(0.0, self._x - d)
+                self._kick()
+            self._last_ev = time.monotonic()
+            return False
+        w = win.pick(self._pos[0], self._pos[1], Gtk.PickFlags.DEFAULT)
+        cand = None
+        while w is not None:
+            if isinstance(w, Gtk.ScrolledWindow) and w.get_policy()[1] != Gtk.PolicyType.NEVER:
+                if self._can_move(w, dy):
+                    log("kann weiter:", w.get_css_classes())
+                    return False                        # irgendwo darüber/darunter geht es noch weiter
+                cand = cand or w
+            w = w.get_parent()
+        log("kandidat", cand, "pick", type(win.pick(self._pos[0], self._pos[1], Gtk.PickFlags.DEFAULT)).__name__)
+        if cand is None:
+            return False
+        self._sw = cand                         # stark halten (sonst stirbt der Python-Wrapper sofort); wird beim Auslaufen gelöst
+        self._dir = 1 if dy > 0 else -1
+        ok, r = cand.compute_bounds(win)
+        self._px = min(1.0, max(0.0, (self._pos[0] - r.get_x()) / max(1.0, r.get_width()))) if ok else 0.5
+        self._pull(d)
+        self._last_ev = time.monotonic()
+        return False
+
+    def _pull(self, d):
+        self._x = min(ENDFX_MAX * 1.2, max(0.0, self._x + d * max(0.08, 1 - self._x / ENDFX_MAX) * 0.55))
+        self._kick()
+
+    def _kick(self):
+        if not self._ticking:
+            self._ticking = True
+            self._t = 0
+            self._tid = self.add_tick_callback(self._tick)
+
+    def _reset(self, *_):
+        """Alles zurücknehmen (Fenster versteckt, Scroll-Fenster weg): sonst bliebe das letzte Bild stehen."""
+        if self._tid:
+            self.remove_tick_callback(self._tid)
+            self._tid = 0
+        self._x = 0.0
+        self._sw = None
+        self._ticking = False
+        self.set_opacity(0)
+        self.queue_draw()
+
+    def _tick(self, w, clock):
+        t = clock.get_frame_time() / 1e6
+        dt = min(0.05, t - self._t) if self._t else 0.016
+        self._t = t
+        if time.monotonic() - self._last_ev > ENDFX_IDLE:      # losgelassen: ohne Überschwingen auslaufen
+            self._x *= 0.86 ** (dt * 60)
+        if self._x < 0.3 or self._sw is None or not self._sw.get_mapped():
+            self._tid = 0
+            self._reset()
+            return GLib.SOURCE_REMOVE
+        self.set_opacity(1)
+        self.queue_draw()
+        return GLib.SOURCE_CONTINUE
+
+    def _visible(self, sw):
+        """Sichtbarer Teil des ScrolledWindows in eigenen Koordinaten (abgeschnitten an Fenster und allen Eltern)."""
+        ok, r = sw.compute_bounds(self)
+        if not ok:
+            return None
+        w = sw.get_parent()
+        while w is not None and w is not self.get_parent():
+            ok, pr = w.compute_bounds(self)
+            if ok:
+                ok, r = r.intersection(pr)
+                if not ok:
+                    return None
+            w = w.get_parent()
+        ok, r = r.intersection(Graphene.Rect().init(0, 0, self.get_width(), self.get_height()))
+        return r if ok and r.get_width() > 4 and r.get_height() > 4 else None
+
+    def do_snapshot(self, snap):
+        sw = self._sw
+        if sw is None or self._x < 0.3 or Pango is None:
+            return
+        r = self._visible(sw)
+        win = self._win()
+        if r is None or win is None or self._pos is None:
+            return
+        ok, pt = win.compute_point(self, Graphene.Point().init(self._pos[0], self._pos[1]))
+        px = pt.x if ok else r.get_x() + r.get_width() / 2          # Zeiger in eigenen Koordinaten
+        x = self._x
+        amp = min(1.0, x / 40)
+        if not self._lay:
+            fd = Pango.FontDescription.from_string("JetBrainsMono Nerd Font, JetBrains Mono, monospace Bold")
+            fd.set_absolute_size(12 * Pango.SCALE)
+            for ch in "░▒▓█":
+                lay = self.create_pango_layout(ch)
+                lay.set_font_description(fd)
+                self._lay[ch] = lay
+            self._cw = max(4.0, self._lay["█"].get_size()[0] / Pango.SCALE)
+            self._lh = max(8.0, self._lay["█"].get_size()[1] / Pango.SCALE)
+        cw, lh = self._cw, 16.0
+        cols = max(1, math.ceil(r.get_width() / cw))
+        rows = int(r.get_height() / lh)
+        hh = 1 + x / 26
+        pc = (px - r.get_x()) / cw - 0.5                            # Spalte unter dem Zeiger
+        sg = 3 + x * 0.12
+        ok2, col = self.get_style_context().lookup_color("primary")
+        if not ok2:
+            col = self.get_color()
+        ramp = " ░▒▓█"
+        ty = (lh - self._lh) / 2
+        snap.push_clip(r)
+        for e in range(min(rows, int(hh) + 1)):
+            y = r.get_y() + r.get_height() - (e + 1) * lh - 1 if self._dir > 0 else r.get_y() + e * lh + 1
+            for c in range(cols):
+                i = amp * math.exp(-(((c - pc) / sg) ** 2)) * max(0.0, 1 - e / hh)
+                k = min(4, math.ceil(i * 4 - 0.05))
+                if k <= 0:
+                    continue
+                cc = Gdk.RGBA()
+                cc.red, cc.green, cc.blue, cc.alpha = col.red, col.green, col.blue, min(1.0, 0.35 + 0.6 * i)
+                snap.save()
+                snap.translate(Graphene.Point().init(r.get_x() + c * cw, y + ty))
+                snap.append_layout(self._lay[ramp[k]], cc)
+                snap.restore()
+        snap.pop()
+
+
+ENDFX_CSS = """
+scrolledwindow > overshoot, scrolledwindow > overshoot.top, scrolledwindow > overshoot.bottom,
+scrolledwindow > overshoot.left, scrolledwindow > overshoot.right {
+    background: none; background-image: none; border: none; box-shadow: none; min-height: 0; min-width: 0; }
+"""
+_endfx_css_done = [False]
+
+
+def _endfx_attach(win):
+    if getattr(win, "_ist_endfx", None) is not None:
+        return
+    if not _endfx_css_done[0]:
+        _endfx_css_done[0] = True
+        prov = Gtk.CssProvider()
+        prov.load_from_string(ENDFX_CSS) if hasattr(prov, "load_from_string") else prov.load_from_data(ENDFX_CSS.encode())
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER + 7)
+    fx = EndFx(win)
+    win._ist_endfx = fx
+    wref = weakref.ref(win)
+
+    def host(*_):
+        win = wref()
+        if win is None:
+            return False
+        child = win.get_child()
+        if child is None or fx.get_root() is win:
+            return False
+        if fx.get_parent() is not None:
+            fx.get_parent().remove_overlay(fx)
+        if isinstance(child, Gtk.Overlay):
+            child.add_overlay(fx)
+        else:
+            win.set_child(None)
+            ov = Gtk.Overlay()
+            ov.set_child(child)
+            ov.add_overlay(fx)
+            win.set_child(ov)
+        return False
+
+    win.connect("notify::child", lambda *_: GLib.idle_add(host))
+    host()
+
+
+def _endfx_scan():
+    if Gdk.Display.get_default() is None:
+        return True
+    for win in Gtk.Window.list_toplevels():
+        try:
+            _endfx_attach(win)
+        except Exception:      # noqa: BLE001 – Zierde darf nie ein Fenster verhindern
+            pass
+    return True
+
+
+def enable_endfx():
+    """Einmal je Prozess: alle (auch später geöffnete) Fenster bekommen die Scroll-Ende-Schattierung."""
+    if os.environ.get("IST_NO_ENDFX") or getattr(enable_endfx, "done", False) or Gtk.get_major_version() < 4:
+        return
+    enable_endfx.done = True
+    GLib.timeout_add(400, _endfx_scan)
+
+
 # ---------- Überblendung beim Hell/Dunkel-Wechsel ----------
 FADE_HOLD = 0.0           # s: altes Bild bleibt kurz voll stehen, bis die neuen Farben gezeichnet sind
 FADE_TIME = 0.12          # s: Dauer der Überblendung
@@ -759,3 +1038,4 @@ def theme_fade_begin():
 
 
 enable_caret()
+enable_endfx()

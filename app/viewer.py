@@ -1084,6 +1084,9 @@ class PdfView(ExtraMixin, Gtk.Box):
             if o + h >= top - m and o <= bottom + m and self.done.get(i) != self.zoom:  # sichtbar oder in der Nähe
                 vis = o + h >= top and o <= bottom
                 want.append((0 if vis else 1, abs(o + h / 2 - mid), i))
+            elif i in self.done and (o + h < top - 3 * m or o > bottom + 3 * m) and i < len(self.pics):
+                self.pics[i].set_paintable(None)       # weit weg: Textur freigeben (19-MB-PDF belegte >1 GB)
+                del self.done[i]
         want.sort()
         if self._async_ok():
             self._request([i for _v, _d, i in want])

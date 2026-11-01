@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.18.0 (2026-11-01)
+- **Scroll-Ende**: Wer am Ende einer Seite weiterscrollt, sieht aus der Kante einen Verlauf aus ░ ▒ ▓ █ aufsteigen, am Mauszeiger am höchsten. Die Liste bewegt sich dabei nicht und der Effekt läuft ohne Überschwingen aus. Er erscheint nur, wenn kein umgebendes Scroll-Fenster mehr weiterscrollen kann. Abschalten: `"scroll_end": false` in ~/.config/rice-apps/settings.json oder Energiesparmodus.
+
 ## 2.17.1 (2026-10-28)
 - **Englisch** wird jetzt auch in der veröffentlichten Fassung mitgeliefert (die Übersetzungstabelle fehlte in 2.17.0).
 

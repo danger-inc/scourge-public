@@ -2159,8 +2159,16 @@ class Scourge(Gtk.Application):
         getattr(glass, "make_movable", lambda *a: None)(self.win, self.notebook)
         self.status_scroll = status_scroll
         # schmales Fenster: Tastenhinweise ausblenden (wie bei datist/musicalist)
-        self.win.add_tick_callback(lambda w, _c: (self.hints.get_visible() != (w.get_width() >= 980)
-                                                  and self.hints.set_visible(w.get_width() >= 980), True)[-1])
+        def fit_hints(width, *_):
+            if self.hints.get_visible() != (width >= 980):
+                self.hints.set_visible(width >= 980)
+        # nur bei Größenänderung der Fläche (ein Tick-Callback hielt den Frame-Takt dauernd auf 60 Hz)
+        def on_realize(w):
+            w.get_surface().connect("layout", lambda _s, width, _h: fit_hints(width))
+            fit_hints(w.get_width())
+        self.win.connect("realize", on_realize)
+        if self.win.get_realized():
+            on_realize(self.win)
         self.new_tab()
 
     def apply_chrome(self):
