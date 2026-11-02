@@ -66,7 +66,7 @@ COMMANDS = [
     (r"hyprshot -m region|grim.*slurp", "bild", "Screenshot: Bereich"),
     (r"hyprshot -m window", "bild", "Screenshot: aktives Fenster"),
     (r"hyprshot -m output|grim", "bild", "Screenshot: ganzer Bildschirm"),
-    (r"wf-recorder", "bild", "Bildschirmaufnahme (scourge) stoppen"),
+    (r"wf-recorder|wl-screenrec", "bild", "Bildschirmaufnahme (scourge) stoppen"),
     (r"wpctl set-volume .*\+", "medien", "Lauter"),
     (r"wpctl set-volume", "medien", "Leiser"),
     (r"wpctl set-mute @DEFAULT_AUDIO_SOURCE@", "medien", "Mikrofon stumm/an"),

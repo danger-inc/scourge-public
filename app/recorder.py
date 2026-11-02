@@ -402,33 +402,45 @@ class RecorderPage(Gtk.ScrolledWindow):
     def start(self, geometry):
         os.makedirs(out_dir(), exist_ok=True)
         self.out = os.path.join(out_dir(), f"aufnahme-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.mp4")
-        cmd = ["wf-recorder", "-y", "-f", self.out, "-r", "60" if self.choice(self.quality) else "30"]
+        fps = "60" if self.choice(self.quality) else "30"
+        # wl-screenrec belastet Hyprland kaum (wf-recorder: ~90 % CPU im Compositor → alles ruckelt)
+        wsr = shutil.which("wl-screenrec") or shutil.which("wl-screenrec", path=os.path.expanduser("~/.local/bin"))
+        fast = bool(wsr) and os.path.exists("/dev/dri/renderD128")
+        self.fast = fast
+        cmd = [wsr, "-f", self.out, "-m", fps] if fast else ["wf-recorder", "-y", "-f", self.out, "-r", fps]
         if geometry:
             cmd += ["-g", geometry]
         else:
             mon = next((m["name"] for m in hypr_json("monitors") if m.get("focused")), None)
             if mon:
                 cmd += ["-o", mon]
+
+        def audio_arg(dev):
+            if fast:
+                return ["--audio"] + (["--audio-device", dev] if dev else [])
+            return [f"--audio={dev}" if dev else "--audio"]
         a = self.choice(self.audio)
         self.mix = None
         if a == 1:
             sink = pulse_default("sink")
-            cmd.append(f"--audio={sink}.monitor" if sink else "--audio")
+            cmd += audio_arg(f"{sink}.monitor" if sink else None)
         elif a == 2:
             src = self.mic_name() or pulse_default("source")
-            cmd.append(f"--audio={src}" if src else "--audio")
+            cmd += audio_arg(src)
         elif a == 3:
             self.mix = rx.AudioMix()
             mon = self.mix.start(pulse_default("sink"), self.mic_name() or pulse_default("source"))
             if mon:
-                cmd.append(f"--audio={mon}")
+                cmd += audio_arg(mon)
             else:
                 self.mix = None
                 self.tab.notify("Ton mischen ging nicht – nur der Systemton wird aufgenommen.")
                 sink = pulse_default("sink")
-                cmd.append(f"--audio={sink}.monitor" if sink else "--audio")
+                cmd += audio_arg(f"{sink}.monitor" if sink else None)
         self.extras_start()
-        if os.path.exists("/dev/dri/renderD128"):  # Grafikkarte kodiert, CPU bleibt frei
+        if fast:
+            pass  # wl-screenrec kodiert selbst auf der Grafikkarte
+        elif os.path.exists("/dev/dri/renderD128"):  # Grafikkarte kodiert, CPU bleibt frei
             cmd += ["-c", "h264_vaapi", "-d", "/dev/dri/renderD128"]
         else:
             cmd += ["-c", "libx264", "-p", "preset=veryfast", "-p", "crf=23"]
@@ -506,7 +518,7 @@ class RecorderPage(Gtk.ScrolledWindow):
         self.stack.set_visible_child_name("setup")
         ok = self.out and os.path.exists(self.out) and os.path.getsize(self.out) > 1000
         if ok:
-            if "h264_vaapi" in self.cmd and code not in (0, 130, -2) and "vaapi" in (err or "").lower():
+            if ("h264_vaapi" in self.cmd or os.path.basename(self.cmd[0]) == "wl-screenrec") and code not in (0, 130, -2) and "vaapi" in (err or "").lower():
                 self.tab.notify("Grafikkarte konnte nicht kodieren, nimm es bitte noch einmal auf.")
             else:
                 self.tab.notify(f"Gespeichert: {os.path.basename(self.out)}")

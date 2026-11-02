@@ -40,6 +40,20 @@ if ask "Optional: Texterkennung (OCR, Deutsch+Englisch) und Maus-Ring für Aufna
     echo
 fi
 
+# Optional: ruckelfreie Bildschirmaufnahme. wf-recorder lastet den Compositor (Hyprland) mit ~90 % CPU aus,
+# wl-screenrec kaum – Scourge nimmt automatisch damit auf, sobald es da ist (sonst wf-recorder).
+if ! command -v wl-screenrec >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/wl-screenrec" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    if ask "Optional: wl-screenrec (ruckelfreie Bildschirmaufnahme) bauen? Braucht Rust (cargo), clang und ffmpeg-Entwicklungspakete." n; then
+        if command -v cargo >/dev/null 2>&1; then
+            cargo install wl-screenrec --root "$HOME/.local" \
+                || warn "wl-screenrec ließ sich nicht bauen – Scourge nimmt weiter mit wf-recorder auf."
+        else
+            warn "cargo fehlt. Arch: yay -S wl-screenrec  ·  sonst Rust installieren und: cargo install wl-screenrec --root ~/.local"
+        fi
+    fi
+    echo
+fi
+
 # ---------------------------------------------------------------- App kopieren
 say "Kopiere Scourge nach $APP_DIR ..."
 mkdir -p "$APP_DIR" "$BIN" "$APPS" "$FONTS" "$ICONS"
@@ -102,6 +116,7 @@ command -v tesseract >/dev/null 2>&1 && echo "  tesseract: ok" || echo "  tesser
 for t in wf-recorder slurp; do
     command -v "$t" >/dev/null 2>&1 && echo "  $t: ok" || echo "  $t: fehlt – nur für die Bildschirmaufnahme (wlroots/Hyprland/Sway)"
 done
+command -v wl-screenrec >/dev/null 2>&1 || [ -x "$HOME/.local/bin/wl-screenrec" ] && echo "  wl-screenrec: ok" || echo "  wl-screenrec: fehlt – optional, macht Aufnahmen ruckelfrei (sonst wf-recorder)"
 echo
 [[ -n "$missing" ]] && { warn "Es fehlt noch: $missing  → siehe README.md (Abschnitt Abhängigkeiten)."; echo; }
 

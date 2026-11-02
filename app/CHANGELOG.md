@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.18.1 (2026-11-02)
+- **Ruckelfreie Aufnahme**: Während einer Bildschirmaufnahme liefen alle Animationen zäh, weil `wf-recorder` den Compositor mit rund 90 % CPU auslastete. Scourge nimmt jetzt mit `wl-screenrec` auf, sobald es installiert ist (Hyprland bleibt dabei bei ca. 20 %); sonst weiter mit `wf-recorder`. Der Installer bietet es optional an (`cargo install wl-screenrec --root ~/.local`). Bei ruhigem Bildschirm speichert es weniger Bilder pro Sekunde (variable Bildrate).
+
 ## 2.18.0 (2026-11-01)
 - **Scroll-Ende**: Wer am Ende einer Seite weiterscrollt, sieht aus der Kante einen Verlauf aus ░ ▒ ▓ █ aufsteigen, am Mauszeiger am höchsten. Die Liste bewegt sich dabei nicht und der Effekt läuft ohne Überschwingen aus. Er erscheint nur, wenn kein umgebendes Scroll-Fenster mehr weiterscrollen kann. Abschalten: `"scroll_end": false` in ~/.config/rice-apps/settings.json oder Energiesparmodus.
 

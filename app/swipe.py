@@ -5,12 +5,72 @@
 # den Render-Knoten der aktuellen Seite (where() → Schlüssel) – beim Seitenwechsel bleibt der letzte stehen.
 # Kein Extra-Rendern, immer frisch. Maustaste 8/9 = zurück/vor.
 # Gemeinsam für scourge, wallist, musicalist (rice-apps/swipe.py); Kopien: notist app/swipe.py, filist app/swipe.py.
-import inspect, math, weakref
+import inspect, math, os, time, weakref
 from collections import OrderedDict
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gdk, GLib, Graphene, Gtk, Pango, PangoCairo
+gi.require_version("Gsk", "4.0")
+from gi.repository import Gdk, GLib, Graphene, Gsk, Gtk, Pango
+
+
+_PROF = os.environ.get("SWIPE_PROF")      # Debug: Pfad einer Logdatei → Bildzeiten während Wischen/Animation
+
+
+def _prof_log(msg):
+    try:
+        with open(_PROF, "a") as f:
+            f.write("%.3f %s\n" % (time.perf_counter(), msg))
+    except OSError:
+        pass
+
+
+_NOTEX = bool(os.environ.get("SWIPE_NOTEX"))   # Debug: Texturen aus
+_probe = [False]
+
+
+def _stall_probe():
+    """Misst, wie spät ein 4-ms-Timer feuert (= wie lange die Main-Loop anderswo beschäftigt war)."""
+    if _probe[0]:
+        return
+    _probe[0] = True
+    last = [time.perf_counter()]
+    n = [0]
+
+    def tick():
+        now = time.perf_counter()
+        late = (now - last[0]) * 1e3 - 4
+        last[0] = now
+        if late > 8:
+            _prof_log("STALL main-loop %.1fms" % late)
+        n[0] += 1
+        if n[0] > 1500:                      # ~ ein paar Sekunden, dann Ruhe
+            _probe[0] = False
+            return False
+        return True
+    GLib.timeout_add(4, tick)
+
+
+def _count(node, acc=None):
+    """Debug: Render-Knoten nach Typ zählen (Text-/Texturknoten, …)."""
+    acc = {} if acc is None else acc
+    n = type(node).__name__
+    acc[n] = acc.get(n, 0) + 1
+    try:
+        for i in range(node.get_n_children()):
+            _count(node.get_child(i), acc)
+    except Exception:      # noqa: BLE001
+        pass
+    try:
+        _count(node.get_child(), acc)
+    except Exception:      # noqa: BLE001
+        pass
+    return acc
+
+
+def _cnt(node):
+    c = _count(node) if node is not None else {}
+    return c.get("TextNode", 0), c.get("TextureNode", 0), sum(c.values())
 
 
 def _eco():
@@ -103,10 +163,12 @@ class SwipeBin(Gtk.Widget):
             self.helpers[k] = lb
 
     def do_dispose(self):
-        ch, hp = getattr(self, "child", None), getattr(self, "helpers", None) or {}
-        for w in [ch] + list(hp.values()):
-            if w is not None and w.get_parent() is self:
-                w.unparent()
+        # über die echten GTK-Kinder gehen: release_tree() leert die Python-Attribute schon vor dem Dispose
+        w = self.get_first_child()
+        while w is not None:
+            nxt = w.get_next_sibling()
+            w.unparent()
+            w = nxt
         self.child, self.helpers = None, {}
         Gtk.Widget.do_dispose(self)
 
@@ -122,16 +184,26 @@ class SwipeBin(Gtk.Widget):
         o = self._owner
         if self.child is None or o is None:
             return
+        t0 = time.perf_counter() if _PROF else 0
         inner = Gtk.Snapshot()
         self.snapshot_child(self.child, inner)
         node = inner.to_node()
+        t1 = time.perf_counter() if _PROF else 0
         o._frame(node)
         st = o.st
         if st is None:
+            if _PROF and time.perf_counter() - o._endt < 0.5:
+                b = node.get_bounds() if node is not None else None
+                _prof_log("POST dt=%.0fms node=%s bounds=%s child_alloc=%dx%d mapped=%s text=%s tex=%s total=%s" % (
+                    (time.perf_counter() - o._endt) * 1e3, type(node).__name__ if node else None,
+                    b and (round(b.get_width()), round(b.get_height())), self.child.get_width(), self.child.get_height(),
+                    self.child.get_mapped(), *_cnt(node)))
             if node is not None:
                 snap.append_node(node)
             return
         o._draw(self, snap, node, st)
+        if _PROF:
+            _prof_log("snap child=%.1fms draw=%.1fms" % ((t1 - t0) * 1e3, (time.perf_counter() - t1) * 1e3))
 
 
 class SwipeBack:
@@ -163,6 +235,7 @@ class SwipeBack:
         self.st = None               # Zeichenzustand während Geste/Animation
         self._g = None               # Gestenzustand
         self._anim = None
+        self._endt = 0.0
         self._tid = None
         sc = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
         sc.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -243,6 +316,7 @@ class SwipeBack:
         if self.st is None:
             node, title = self._info(d)
             self.st = {"d": d, "p": 0.0, "node": node, "title": title}
+            self._prepare(self.st)
         self._commit(animate)
         return True
 
@@ -325,6 +399,7 @@ class SwipeBack:
                 self._freeze(g)
                 node, title = self._info(d)
                 self.st = {"d": d, "p": 0.0, "node": node, "title": title}
+                self._prepare(self.st)
             else:
                 g["lock"] = "v"
         if g["lock"] != "h":
@@ -336,6 +411,8 @@ class SwipeBack:
         if self._tid:
             GLib.source_remove(self._tid)
         self._tid = GLib.timeout_add(600, self._timeout)   # falls kein Ende gemeldet wird
+        if _PROF:
+            _stall_probe()
         return True
 
     def _timeout(self):
@@ -430,9 +507,49 @@ class SwipeBack:
 
         def done():
             self.st = None
+            self._endt = time.perf_counter()
         self._run(DUR_COMMIT, step, done)
 
     # ---------- Zeichnen ----------
+    def _tex(self, w, st, key, node, W, H, make=False):
+        """Statische Seite einmal als GPU-Textur rendern: pro Bild dann 1 Quad statt tausender Render-Knoten
+        (GSK läuft den Knotenbaum jedes Bild neu durch → im Vollbild CPU-bound, Main-Thread ~13 ms)."""
+        if node is None or _NOTEX:
+            return None
+        if not make:                       # beim Zeichnen nie rendern (mitten im Bild → leeres Fenster)
+            return st.get(key)
+        if key in st:
+            return st[key]
+        tex = None
+        try:
+            native = w.get_native()
+            surf = native.get_surface() if native is not None else None
+            sc = surf.get_scale() if surf is not None and hasattr(surf, "get_scale") else 1.0
+            r = native.get_renderer() if native is not None else None
+            if r is not None and W > 0 and H > 0:
+                sn = Gtk.Snapshot()
+                sn.scale(sc, sc)
+                sn.append_node(node)
+                tex = r.render_texture(sn.to_node(), _rect(0, 0, W * sc, H * sc))
+                tex = (tex, W, H)          # in der Größe zeichnen, in der gerendert wurde (Seitenwechsel ändert die Höhe)
+        except Exception:      # noqa: BLE001
+            tex = None
+        st[key] = tex
+        return tex
+
+    def _prepare(self, st):
+        """Texturen vorab (aus dem Event-Handler, nicht aus do_snapshot) rendern."""
+        W, H = self.bin.get_width(), self.bin.get_height()
+        self._tex(self.bin, st, "ftex", self._last[1], W, H, True)
+        self._tex(self.bin, st, "gtex", st.get("node"), W, H, True)
+
+    @staticmethod
+    def _put(snap, tex, node, W, H):
+        if tex is not None:
+            snap.append_texture(tex[0], _rect(0, 0, tex[1], tex[2]))
+        else:
+            snap.append_node(node)
+
     def _draw(self, w, snap, live, st):
         W, H = w.get_width(), w.get_height()
         d = st["d"]
@@ -463,7 +580,7 @@ class SwipeBack:
             snap.push_opacity(front_alpha)
             snap.save()
             snap.translate(Graphene.Point().init(sx, 0))
-            snap.append_node(front)
+            self._put(snap, self._tex(w, st, "ftex", front, W, H), front, W, H)
             snap.restore()
             snap.pop()
             snap.pop()
@@ -471,19 +588,23 @@ class SwipeBack:
         node = st.get("node")
         snap.push_clip(_rect(gx, 0, gw, H))
         if commit:
-            fade = max(0.0, min(1.0, (st["t"] - 0.55) / 0.45))     # zum Ende hin aufs Live-Bild überblenden
-            if live is not None and (node is None or fade > 0):
-                snap.push_opacity(1.0 if node is None else fade)
-                snap.append_node(live)
-                snap.pop()
-            if node is not None and fade < 1:
-                snap.push_opacity(1 - fade)
-                snap.append_node(node)
+            # Ghost-Bild (alte Aufnahme der Zielseite) zeigen, bis die Live-Seite Inhalt hat, dann harter Schnitt.
+            # (Überblenden ging schief: die Seiten sind durchscheinend, Cross-Fade/Deckkraft-Ebenen dimmten Text und UI
+            # für 1–3 Bilder. Direkt nach back() ist die Live-Seite außerdem ~100–150 ms leer.)
+            t = st["t"]
+            if "t_live" not in st and t >= 0.5 and live is not None and _cnt(live)[2] > 3:
+                st["t_live"] = t
+            if node is None or t >= 1.0 or "t_live" in st:
+                if live is not None:
+                    snap.append_node(live)
+            else:
+                snap.push_opacity(0.72 + 0.28 * min(1.0, t / 0.5))      # Ghost-Deckkraft weich von 0,72 auf 1
+                self._put(snap, self._tex(w, st, "gtex", node, W, H), node, W, H)
                 snap.pop()
         else:
             if node is not None:
                 snap.push_opacity(0.72 if ready else 0.5 + 0.15 * st["p"])
-                snap.append_node(node)
+                self._put(snap, self._tex(w, st, "gtex", node, W, H), node, W, H)
                 snap.pop()
             else:
                 snap.append_color(w.color("bg", 0.82), _rect(gx, 0, gw, H))
@@ -493,27 +614,24 @@ class SwipeBack:
             self._chrome(w, snap, gx, gw, H, st, ready, frame_alpha, d, node is None and not commit)
 
     def _chrome(self, w, snap, gx, gw, H, st, ready, alpha, d, empty):
-        cr = snap.append_cairo(_rect(gx, 0, gw, H))
-        acc, on, bg = w.color("acc"), w.color("on"), w.color("bg")
-        cr.set_line_width(1.0)
-        r = 6.0
-        x0, y0, x1, y1 = gx + 0.5, 0.5, gx + gw - 0.5, H - 0.5
-        cr.new_sub_path()
-        cr.arc(x1 - r, y0 + r, r, -math.pi / 2, 0)
-        cr.arc(x1 - r, y1 - r, r, 0, math.pi / 2)
-        cr.arc(x0 + r, y1 - r, r, math.pi / 2, math.pi)
-        cr.arc(x0 + r, y0 + r, r, math.pi, 3 * math.pi / 2)
-        cr.close_path()
+        """Frame + title chip, drawn with GSK nodes (GPU) instead of Cairo (CPU raster + upload every frame)."""
+        acc, on, bg = w.color("acc", alpha), w.color("on", alpha), w.color("bg")
+        snap.push_clip(_rect(gx, 0, gw, H))
+        # Rahmen (gestrichelt, solange nicht voll)
+        rr = Gsk.RoundedRect()
+        rr.init_from_rect(_rect(gx + 0.5, 0.5, gw - 1, H - 1), 6.0)
+        pb = Gsk.PathBuilder.new()
+        pb.add_rounded_rect(rr)
+        stroke = Gsk.Stroke.new(1.0)
         if not ready:
-            cr.set_dash([5.0, 4.0])
-        cr.set_source_rgba(acc.red, acc.green, acc.blue, alpha)
-        cr.stroke()
-        cr.set_dash([])
+            stroke.set_dash([5.0, 4.0])
+        snap.append_stroke(pb.to_path(), stroke, acc)
         if ready:                                   # leichter Schein nach innen
             for i, a in ((1, 0.35), (2, 0.18), (3, 0.08)):
-                cr.rectangle(x0 + i, y0 + i, x1 - x0 - 2 * i, y1 - y0 - 2 * i)
-                cr.set_source_rgba(acc.red, acc.green, acc.blue, a * alpha)
-                cr.stroke()
+                gr = Gsk.RoundedRect()
+                gr.init_from_rect(_rect(gx + i, i, gw - 2 * i, H - 2 * i), 0.0)
+                c = w.color("acc", a * alpha)
+                snap.append_border(gr, [1.0] * 4, [c] * 4)
         # Titel-Chip oben am Rahmen (zurück: rechts oben, vor: links oben)
         text = ("‹ " + st["title"]) if d < 0 else (st["title"] + " ›")
         lay = w.create_pango_layout(text)
@@ -527,29 +645,19 @@ class SwipeBack:
         cx = (gx + gw - cw - 10) if d < 0 else (gx + 10)
         cx = max(gx + 4, min(cx, gx + gw - cw - 4)) if cw + 8 < gw else gx + 4
         cy = 8
-        cr.save()
-        cr.rectangle(gx, 0, gw, H)
-        cr.clip()
-        cr.new_sub_path()
-        rr = 4.0
-        cr.arc(cx + cw - rr, cy + rr, rr, -math.pi / 2, 0)
-        cr.arc(cx + cw - rr, cy + ch - rr, rr, 0, math.pi / 2)
-        cr.arc(cx + rr, cy + ch - rr, rr, math.pi / 2, math.pi)
-        cr.arc(cx + rr, cy + rr, rr, math.pi, 3 * math.pi / 2)
-        cr.close_path()
+        cr = Gsk.RoundedRect()
+        cr.init_from_rect(_rect(cx, cy, cw, ch), 4.0)
+        snap.push_rounded_clip(cr)
         if ready:
-            cr.set_source_rgba(acc.red, acc.green, acc.blue, alpha)
-            cr.fill()
+            snap.append_color(acc, _rect(cx, cy, cw, ch))
             fg = on
         else:
-            cr.set_source_rgba(bg.red, bg.green, bg.blue, 0.92 * alpha)
-            cr.fill_preserve()
-            cr.set_source_rgba(acc.red, acc.green, acc.blue, alpha)
-            cr.stroke()
+            snap.append_color(w.color("bg", 0.92 * alpha), _rect(cx, cy, cw, ch))
             fg = acc
-        cr.move_to(cx + 8, cy + 2)
-        cr.set_source_rgba(fg.red, fg.green, fg.blue, alpha)
-        PangoCairo.show_layout(cr, lay)
+        snap.pop()
+        if not ready:
+            snap.append_border(cr, [1.0] * 4, [acc] * 4)
+        self._text(snap, lay, cx + 8, cy + 2, fg)
         # Ohne Bild der vorigen Seite: Titel groß in die Mitte
         if empty and gw > tw + 24:
             lay2 = w.create_pango_layout(text)
@@ -558,7 +666,13 @@ class SwipeBack:
             lay2.set_font_description(fd2)
             _i, l2 = lay2.get_pixel_extents()
             if l2.width + 16 < gw:
-                cr.move_to(gx + (gw - l2.width) / 2, H / 2 - l2.height / 2)
-                cr.set_source_rgba(acc.red, acc.green, acc.blue, 0.55 * alpha)
-                PangoCairo.show_layout(cr, lay2)
-        cr.restore()
+                self._text(snap, lay2, gx + (gw - l2.width) / 2, H / 2 - l2.height / 2,
+                           w.color("acc", 0.55 * alpha))
+        snap.pop()
+
+    @staticmethod
+    def _text(snap, lay, x, y, color):
+        snap.save()
+        snap.translate(Graphene.Point().init(x, y))
+        snap.append_layout(lay, color)
+        snap.restore()

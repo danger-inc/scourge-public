@@ -137,7 +137,7 @@ these functions depend on additional programs:
 | view pdf | poppler | installed via package |
 | video cut / export, thumbnails | `ffmpeg` | installed via package |
 | copy to clipboard | `wl-clipboard` (wayland) | under x11 gtk uses xclip-like itself |
-| **screen recording** | `wf-recorder`, `slurp` | **wlroots/hyprland/sway only** – not available under gnome/kde |
+| **screen recording** | `wf-recorder` (optional `wl-screenrec`: smooth, light on the compositor), `slurp` | **wlroots/hyprland/sway only** – not available under gnome/kde |
 | **system settings** (mouse/keyboard) | `hyprctl` | **hyprland only** – the rest (brightness/audio/radio) goes via `brightnessctl`/`wpctl`/`nmcli`, if available |
 
 short: **file analysis, editor, cutter and studio run on every linux.**
