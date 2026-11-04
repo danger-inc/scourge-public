@@ -1499,7 +1499,7 @@ class Tab(Gtk.Box):
     def turn_page(self, d):
         if self.doc and self.doc.pages and self.stack.get_visible_child_name() == "main":
             if self.doc.doc_obj is not None:
-                self.pdf_view.goto(self.pdf_view.current_page() + d)
+                self.pdf_view.skip_page(d)
             else:
                 self.show_page(self.page_i + d)
 

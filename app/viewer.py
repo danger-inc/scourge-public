@@ -65,7 +65,7 @@ TOOLS = (("text", "󰊄", "text schreiben", "t"), ("select", "󰇀", "text ausw�
          ("erase", "󰇾", "radierer", "e"))
 TOOL_TIPS = {"select": "Text auswählen, kopieren, Links folgen", "highlight": "Text mit dem Textmarker markieren",
              "underline": "Text unterstreichen", "strike": "Text durchstreichen",
-             "text": "Text (Schrift) auf die Seite setzen – Klick auf vorhandenen Text bearbeitet ihn",
+             "text": "Text auf die Seite setzen – Klick auf ein Textfeld bearbeitet es, Ziehen verschiebt es, Auswahl im Feld lässt sich einzeln formatieren",
              "ink": "Freihand zeichnen", "rect": "Rahmen aufziehen", "note": "Notiz anheften",
              "sign": "Gespeicherte Unterschrift per Klick auf die Seite setzen (Größe: Breite)",
              "redact": "Bereiche aufziehen, die endgültig geschwärzt werden sollen",
@@ -204,7 +204,11 @@ def clone_annot(doc, page, a):
     elif t == T.FREE_TEXT:
         n = P.AnnotFreeText.new(doc, rect)
         fd = a.get_font_desc()
-        if fd:
+        lab = parse_label(a)
+        if lab and fd:
+            n.set_font_desc(font_desc(lab["font"], fd.size_pt or 14, lab["bold"], lab["italic"]))
+            n.set_label(a.get_label())
+        elif fd:
             n.set_font_desc(fd)
         fc = a.get_font_color()
         if fc:
@@ -243,15 +247,71 @@ def clone_annot(doc, page, a):
     return n
 
 
+# ---------- Textfelder: Formatierung je Zeichen ----------
+# Ein Textfeld ist für Poppler ein FreeText mit EINER Schrift. Teilformatierung (fett, kursiv, Farbe, Größe, Schrift
+# je Zeichen) legt deshalb je Zeile und Lauf gleicher Formatierung einen eigenen FreeText ab. Zusammengehalten werden
+# sie über das Label (/T) jeder Anmerkung: "SC1;<Feld>;<Zeile>;<Lauf>;<Schrift>;<bi>;<x>;<y>". Beim Bearbeiten setzt
+# Scourge das Feld daraus wieder zusammen. (Poppler vergisst Schrift/Fett/Kursiv beim Speichern – das Label bewahrt sie.)
+LABEL_TAG = "SC1"
+
+
+def font_desc(font, size, bold=False, italic=False):
+    P = _poppler()
+    fd = P.FontDescription.new(font)
+    fd.size_pt = size
+    fd.weight = P.Weight.BOLD if bold else P.Weight.NORMAL
+    fd.style = P.Style.ITALIC if italic else P.Style.NORMAL
+    return fd
+
+
+def make_label(gid, line, idx, st, x, y):
+    return f"{LABEL_TAG};{gid};{line};{idx};{st[0]};{'b' if st[3] else ''}{'i' if st[4] else ''};{x:.2f};{y:.2f}"
+
+
+def parse_label(a):
+    try:
+        p = (a.get_label() or "").split(";")
+        if len(p) != 8 or p[0] != LABEL_TAG:
+            return None
+        return {"gid": p[1], "line": int(p[2]), "idx": int(p[3]), "font": p[4], "bold": "b" in p[5],
+                "italic": "i" in p[5], "x": float(p[6]), "y": float(p[7])}
+    except Exception:
+        return None
+
+
+def annot_style(a, fallback):
+    """Formatierung eines FreeText als (Schrift, Größe, Farbe, fett, kursiv); fallback = Standard, wenn nichts bekannt ist."""
+    font, size, color, bold, italic = fallback
+    lab = parse_label(a)
+    try:
+        fd = a.get_font_desc()
+    except Exception:
+        fd = None
+    if fd:
+        if fd.size_pt:
+            size = fd.size_pt
+        if not lab and fd.font_name:
+            f = next((f for _n, f in FONTS if f.lower() == fd.font_name.lower()), None)
+            if f:
+                font = f
+    if lab:
+        font, bold, italic = lab["font"], lab["bold"], lab["italic"]
+    col = _hex_of(a.get_font_color())
+    if col:
+        color = col
+    return (font, size, color, bold, italic)
+
+
 _TEXT_CALIB = {}
 
 
-def text_metrics(font):
+def text_metrics(font, bold=False, italic=False):
     """Wo Poppler eine Freitext-Anmerkung zeichnet – relativ zu einem Pango-Layout derselben Schrift, als
     Vielfache der Schriftgröße: (dx, dy, Zeilenvorschub). Einmal pro Schrift an einem unsichtbaren Mini-PDF
     gemessen, damit die Live-Vorschau beim Tippen genau dort steht, wo der Text danach im PDF landet."""
-    if font in _TEXT_CALIB:
-        return _TEXT_CALIB[font]
+    key = (font, bool(bold), bool(italic))
+    if key in _TEXT_CALIB:
+        return _TEXT_CALIB[key]
     res = (0.0, 0.0, 1.0)
     try:
         import io
@@ -269,9 +329,7 @@ def text_metrics(font):
 
         def box(text):
             a = P.AnnotFreeText.new(doc, _prect(x0, H - y0 - 400, x0 + 600, H - y0))
-            fd = P.FontDescription.new(font)
-            fd.size_pt = S
-            a.set_font_desc(fd)
+            a.set_font_desc(font_desc(font, S, bold, italic))
             a.set_font_color(_pcolor("#000000"))
             a.set_border_width(0)
             a.set_contents(text)
@@ -290,6 +348,10 @@ def text_metrics(font):
         lay = PangoCairo.create_layout(cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)))
         fd = Pango.FontDescription.from_string(font)
         fd.set_absolute_size(S * Pango.SCALE)
+        if bold:
+            fd.set_weight(Pango.Weight.BOLD)
+        if italic:
+            fd.set_style(Pango.Style.ITALIC)
         lay.set_font_description(fd)
         lay.set_text("H", -1)
         ink, _log = lay.get_pixel_extents()
@@ -297,7 +359,7 @@ def text_metrics(font):
             res = ((one[0] - x0 - ink.x) / S, (one[1] - y0 - ink.y) / S, (two[3] - one[3]) / S)
     except Exception:
         pass
-    _TEXT_CALIB[font] = res
+    _TEXT_CALIB[key] = res
     return res
 
 
@@ -364,6 +426,12 @@ class PageWidget(Gtk.Widget):
 
 
 class PdfView(ExtraMixin, Gtk.Box):
+    bold = italic = False       # Formatierung der Werkzeugleiste (Text-Werkzeug)
+    _syncing = False            # Werkzeugleiste wird gerade vom Programm gesetzt (löst keine Änderung aus)
+    _tmode = None               # laufende Maus-Aktion im Textfeld: ("sel"|"word"|"move"|"pick", …)
+    _lastclick = None
+    fhover = None               # (Seite, Box): Textfeld unter der Maus (blauer Rahmen + Griff)
+
     def __init__(self, editable=False, notify=None, on_saved=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.editable = editable
@@ -405,14 +473,14 @@ class PdfView(ExtraMixin, Gtk.Box):
 
         bar = Gtk.Box(spacing=6)
         bar.add_css_class("pdf-bar")
-        self.prev = self._btn("󰅁", "Vorherige Seite (Bild ↑)", lambda: self.goto(self.current_page() - 1))
+        self.prev = self._btn("󰅁", "Vorherige Seite (Bild ↑)", lambda: self.skip_page(-1))
         self.page_lbl = Gtk.Label(label="", tooltip_text="Klick: zu einer Seite springen (Strg+G)")
         self.page_lbl.add_css_class("key")
         self.page_lbl.set_cursor_from_name("pointer")
         jump = Gtk.GestureClick()
         jump.connect("released", lambda *_: self.ask_page())
         self.page_lbl.add_controller(jump)
-        self.next = self._btn("󰅂", "Nächste Seite (Bild ↓)", lambda: self.goto(self.current_page() + 1))
+        self.next = self._btn("󰅂", "Nächste Seite (Bild ↓)", lambda: self.skip_page(1))
         for w in (self.prev, self.page_lbl, self.next):
             bar.append(w)
         bar.append(Gtk.Box(hexpand=True))
@@ -452,6 +520,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.scroll.get_hadjustment().connect("changed", lambda *_: self.fit and GLib.idle_add(self._refit))
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self.on_key)
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)   # vor dem ScrolledWindow, das Pfeile sonst als Rollen nimmt
         self.add_controller(keys)
         self.keys = keys
         zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
@@ -543,6 +612,10 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.font_dd.set_valign(Gtk.Align.CENTER)
         self.font_dd.connect("notify::selected", self._on_font)
         row.append(self.font_dd)
+        self.bold_btn = self._fmt_btn("<b>B</b>", "Fett (Strg+B) – gilt für die Auswahl im Textfeld", "bold")
+        self.italic_btn = self._fmt_btn("<i>I</i>", "Kursiv (Strg+I) – gilt für die Auswahl im Textfeld", "italic")
+        row.append(self.bold_btn)
+        row.append(self.italic_btn)
         row.append(self.size_lbl)
         row.append(self.size_spin)
         flow.append(row)
@@ -565,6 +638,16 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.tool_btns["select"].set_active(True)
         self._sync_tools()
         return flow
+
+    def _fmt_btn(self, markup, tip, which):
+        b = Gtk.ToggleButton(tooltip_text=tip, focus_on_click=False, valign=Gtk.Align.CENTER)
+        lb = Gtk.Label()
+        lb.set_markup(markup)
+        b.set_child(lb)
+        b.add_css_class("pb")
+        b.add_css_class("ptool")
+        b.connect("toggled", lambda btn: self._on_fmt(which, btn.get_active()))
+        return b
 
     @staticmethod
     def _load_custom():
@@ -711,7 +794,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         if key != self.tool:
             self.commit_edit()
             self.tool = key
-            self.sel = self.live = self.hover = self.ghost = None
+            self.sel = self.live = self.hover = self.ghost = self.fhover = None
             if self.editable and not self.tool_btns[key].get_active():
                 self.tool_btns[key].set_active(True)
             self._redraw_all()
@@ -726,21 +809,26 @@ class PdfView(ExtraMixin, Gtk.Box):
     def set_color(self, hexcol):
         if self.tool in self.colors:
             self.colors[self.tool] = hexcol
+        if self.tool == "text":
+            self._fmt_apply(2, hexcol)
         self._sync_tools()
-        self._edit_style()
 
     def _on_size(self, spin):
+        if self._syncing:
+            return
         if self.tool == "text":
             self.font_size = spin.get_value()
-            self._edit_style()
+            self._fmt_apply(1, self.font_size)
         elif self.tool in ("ink", "rect"):
             self.width = spin.get_value()
         elif self.tool == "sign":
             self.sign_width = spin.get_value()
 
     def _on_font(self, dd, _pspec):
+        if self._syncing:
+            return
         self.font = FONTS[dd.get_selected()][1]
-        self._edit_style()
+        self._fmt_apply(0, self.font)
 
     def _sync_tools(self):
         if not self.editable:
@@ -753,23 +841,26 @@ class PdfView(ExtraMixin, Gtk.Box):
             (b.add_css_class if hexcol == cur else b.remove_css_class)("active")
         sized = self.tool in ("text", "ink", "rect", "sign")
         self.font_dd.set_visible(self.tool == "text")
-        want = next((k for k, (_, f) in enumerate(FONTS) if f == self.font), 0)
-        if self.font_dd.get_selected() != want:
-            self.font_dd.set_selected(want)
+        self.bold_btn.set_visible(self.tool == "text")
+        self.italic_btn.set_visible(self.tool == "text")
         self.size_spin.set_visible(sized)
         self.size_lbl.set_visible(sized)
-        if self.tool == "text":
-            self.size_lbl.set_label("pt")
-            self.size_spin.set_range(6, 72)
-            self.size_spin.set_value(self.font_size)
-        elif self.tool == "sign":
-            self.size_lbl.set_label("breite")
-            self.size_spin.set_range(60, 400)
-            self.size_spin.set_value(self.sign_width)
-        elif sized:
-            self.size_lbl.set_label("stärke")
-            self.size_spin.set_range(1, 12)
-            self.size_spin.set_value(self.width)
+        self._syncing = True
+        try:
+            if self.tool == "text":
+                self.size_lbl.set_label("pt")
+                self.size_spin.set_range(6, 72)
+            elif self.tool == "sign":
+                self.size_lbl.set_label("breite")
+                self.size_spin.set_range(60, 400)
+                self.size_spin.set_value(self.sign_width)
+            elif sized:
+                self.size_lbl.set_label("stärke")
+                self.size_spin.set_range(1, 12)
+                self.size_spin.set_value(self.width)
+        finally:
+            self._syncing = False
+        self._sync_style_widgets()
         self.undo_btn.set_sensitive(bool(self.undo_stack))
         self.redo_btn.set_sensitive(bool(self.redo_stack))
         self.save_btn.set_sensitive(self.dirty and bool(self.path))
@@ -778,6 +869,25 @@ class PdfView(ExtraMixin, Gtk.Box):
         if self.dirty:
             self._queue_autosave()
         self.save_btn.set_label("󰆓 speichern" if self.dirty else "󰆓")
+
+    def _sync_style_widgets(self):
+        """Schrift, Größe, Fett/Kursiv und Farbe der Leiste auf self.font … abstimmen (ohne Änderung auszulösen)."""
+        if not self.editable:
+            return
+        self._syncing = True
+        try:
+            want = next((k for k, (_, f) in enumerate(FONTS) if f == self.font), 0)
+            if self.font_dd.get_selected() != want:
+                self.font_dd.set_selected(want)
+            if self.tool == "text":
+                self.size_spin.set_value(self.font_size)
+            self.bold_btn.set_active(self.bold)
+            self.italic_btn.set_active(self.italic)
+            cur = self.colors.get(self.tool)
+            for hexcol, b in self.color_btns.items():
+                (b.add_css_class if hexcol == cur else b.remove_css_class)("active")
+        finally:
+            self._syncing = False
 
     # ---------- Popover: Auswahl-Aktionen, Text-/Notizeingabe ----------
     def _build_popovers(self):
@@ -935,7 +1045,7 @@ class PdfView(ExtraMixin, Gtk.Box):
             da.add_controller(drag)
             motion = Gtk.EventControllerMotion()
             motion.connect("motion", self._motion, i)
-            motion.connect("leave", lambda *_: (self._set_hover(None), self._clear_ghost()))
+            motion.connect("leave", lambda *_: (self._set_hover(None), self._set_fhover(None), self._clear_ghost()))
             da.add_controller(motion)
             self.pics.append(p)
             self.areas.append(da)
@@ -1016,7 +1126,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         y, out = GAP, []
         for w, h in self.sizes:
             out.append(y)
-            y += h * self.zoom + GAP
+            y += int(h * self.zoom) + GAP          # wie set_size_request der Seiten (sonst driftet es pro Seite um <1 px)
         return out
 
     def current_page(self):
@@ -1061,6 +1171,25 @@ class PdfView(ExtraMixin, Gtk.Box):
         pop.popup()
         ent.grab_focus()
         ent.select_region(0, -1)
+
+    def _nav_ok(self, focus):
+        """Pfeiltasten blättern, außer der Fokus liegt auf einem Regler/Auswahlfeld, das die Pfeile selbst braucht."""
+        w = focus
+        while w is not None and w is not self:
+            if isinstance(w, (Gtk.DropDown, Gtk.SpinButton, Gtk.Scale, Gtk.Entry, Gtk.Text, Gtk.TextView)):
+                return False
+            w = w.get_parent()
+        return True
+
+    def skip_page(self, d):
+        """Eine Seite vor/zurück. Ausgangsseite = zuletzt angesprungene, solange nicht dazwischen gescrollt wurde –
+        sonst kippt die Zählung, wenn die letzten Seiten nicht mehr bündig nach oben passen."""
+        va = self.scroll.get_vadjustment()
+        nav = getattr(self, "_nav", None)
+        base = nav[0] if nav and abs(va.get_value() - nav[1]) < 1.5 else self.current_page()
+        i = max(0, min(base + d, len(self.sizes) - 1))
+        self.goto(i)
+        self._nav = (i, va.get_value())
 
     def goto(self, i, render_only=False, y_in_page=0):
         if not self.doc:
@@ -1332,33 +1461,48 @@ class PdfView(ExtraMixin, Gtk.Box):
             self.sel = None
             self._rerender(i)
 
-    def _text_size(self, text, font, size):
-        import cairo
-        surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
-        lay = PangoCairo.create_layout(cairo.Context(surf))
-        PangoCairo.context_set_resolution(lay.get_context(), 72)
-        lay.set_font_description(Pango.FontDescription.from_string(f"{font} {size}"))
-        lay.set_text(text, -1)
+    def _text_size(self, text, st):
+        lay = self._lay(self._mc(), text, st)
         _ink, logical = lay.get_pixel_extents()
         return logical.width, logical.height
 
-    def _make_free_text(self, i, x, y, text, font, size, color):
-        """Text an (x, y) = linke obere Ecke (Seitenkoordinaten). Rahmen wird an den Text angepasst."""
+    def _ft(self, i, x, y, text, st, label):
+        """Eine FreeText-Anmerkung; (x, y) = linke obere Ecke (Seitenkoordinaten). Rahmen eng am Text."""
         P = _poppler()
         w, h = self.sizes[i]
-        tw, th = self._text_size(text, font, size)
+        tw, th = self._text_size(text, st)
         pad = 3
-        x2 = min(w, x + tw + 2 * pad + size * 0.6)    # etwas Luft: Poppler bricht sonst schon früher um
-        y2 = min(h, y + th + 2 * pad + size * 0.2)
+        x2 = min(w, x + tw + 2 * pad + st[1] * 0.6)    # etwas Luft: Poppler bricht sonst schon früher um
+        y2 = min(h, y + th + 2 * pad + st[1] * 0.2)
         a = P.AnnotFreeText.new(self.doc, _prect(x, h - y2, x2, h - y))
-        fd = P.FontDescription.new(font)
-        fd.size_pt = size
-        a.set_font_desc(fd)
-        a.set_font_color(_pcolor(color))
+        a.set_font_desc(font_desc(st[0], st[1], st[3], st[4]))
+        a.set_font_color(_pcolor(st[2]))
         a.set_border_width(0)
         a.set_contents(text)
+        a.set_label(label)
         self.page(i).add_annot(a)
         return a
+
+    def _make_field(self, i, x, y, text, fmt):
+        """Textfeld aus Text + Formatierung je Zeichen als Anmerkung(en) auf die Seite legen -> Liste.
+        Einheitliche Formatierung = eine Anmerkung; gemischte = je Zeile und Lauf eine (siehe parse_label)."""
+        import uuid
+        gid = uuid.uuid4().hex[:8]
+        if len(set(fmt)) <= 1:
+            st = fmt[0]
+            return [self._ft(i, x, y, text, st, make_label(gid, 0, 0, st, x, y))]
+        out = []
+        for L in self._geom(text, fmt, x, y)["lines"]:
+            for n, r in enumerate(L["runs"]):
+                st = r["st"]
+                dx, dy, _a = text_metrics(st[0], st[3], st[4])
+                out.append(self._ft(i, r["x"] - dx * st[1], r["y"] - dy * st[1], r["text"], st,
+                                    make_label(gid, L["k"], n, st, x, y)))
+        return out
+
+    def _make_free_text(self, i, x, y, text, font, size, color):
+        st = (font, size, color, False, False)
+        return self._make_field(i, x, y, text, [st] * len(text))[0]
 
     def _make_note(self, i, x, y, text):
         P = _poppler()
@@ -1404,9 +1548,57 @@ class PdfView(ExtraMixin, Gtk.Box):
                 continue
             r = m.area
             box = (r.x1, h - r.y2, r.x2, h - r.y1)
+            if a.get_annot_type() == P.AnnotType.FREE_TEXT:          # Textfeld: enge Umrandung statt Rahmen mit Luft
+                box = self._annot_box(i, a)
             if box[0] - tol <= x <= box[2] + tol and box[1] - tol <= y <= box[3] + tol:
                 out.append((a, box))
         return out[::-1]
+
+    def _annot_box(self, i, a):
+        """Enge Umrandung eines FreeText (oben-links): so groß wie der gesetzte Text, ohne die Luft des PDF-Rahmens."""
+        st = annot_style(a, self._cur_style())
+        r = a.get_rectangle()
+        dx, dy, adv = text_metrics(st[0], st[3], st[4])
+        lines = (a.get_contents() or "").split("\n")
+        cr = self._mc()
+        w = max(self._lay(cr, l or " ", st).get_size()[0] for l in lines) / Pango.SCALE
+        hh = self._lay(cr, "Hg", st).get_size()[1] / Pango.SCALE
+        x, y = r.x1 + dx * st[1], self.sizes[i][1] - r.y2 + dy * st[1]
+        return (x, y, x + w, y + (len(lines) - 1) * adv * st[1] + hh)
+
+    def field_members(self, i, a):
+        """Alle Anmerkungen des Textfelds, zu dem a gehört (bei Teilformatierung mehrere), nach Zeile/Lauf sortiert."""
+        lab = parse_label(a)
+        if not lab:
+            return [a]
+        P = _poppler()
+        mem = []
+        for m in self.page(i).get_annot_mapping():
+            b = m.annot
+            if b.get_annot_type() == P.AnnotType.FREE_TEXT:
+                l = parse_label(b)
+                if l and l["gid"] == lab["gid"]:
+                    mem.append((l["line"], l["idx"], b))
+        mem.sort(key=lambda t: (t[0], t[1]))
+        return [b for _l, _n, b in mem] or [a]
+
+    def _field_box(self, i, mem):
+        bs = [self._annot_box(i, a) for a in mem]
+        return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+
+    def fields_at(self, i, x, y, tol=2):
+        """Textfelder unter dem Punkt, oberstes zuerst: [(Mitglieder, enge Box)]."""
+        P = _poppler()
+        out, seen = [], set()
+        for a, _box in self.annots_at(i, x, y, tol):
+            if a.get_annot_type() != P.AnnotType.FREE_TEXT:
+                continue
+            mem = self.field_members(i, a)
+            if annot_key(mem[0]) in seen:
+                continue
+            seen.add(annot_key(mem[0]))
+            out.append((mem, self._field_box(i, mem)))
+        return out
 
     def _ref(self, a):
         k = annot_key(a)
@@ -1585,7 +1777,36 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.grab_focus()
         px, py = self._pt(i, x, y)
         self._drag = (i, px, py)
+        self._tmode = None
         t = self.tool
+        e = self.edit
+        if self.editable and e and e["i"] == i and t == "text":
+            g = self._geom_e()
+            zone = self._edit_zone(g, px, py)
+            if zone == "grip":
+                self._tmode = ("move", e["x"], e["y"])
+                return
+            if zone == "text":
+                n = self._count_click(i, x, y)
+                idx = self._index_at(g, e["text"], px, py)
+                if n == 1:
+                    e["cur"], e["sel"] = idx, idx
+                    self._tmode = ("sel",)
+                elif n == 2:
+                    lo, hi = self._word_bounds(e["text"], idx)
+                    e["sel"], e["cur"] = lo, hi
+                    self._tmode = ("word", lo, hi)
+                else:
+                    t_ = e["text"]
+                    e["sel"], e["cur"] = t_.rfind("\n", 0, idx) + 1, (t_.find("\n", idx) if "\n" in t_[idx:] else len(t_))
+                    self._tmode = ("line",)
+                self._caret_on = True
+                self._edit_changed()
+                return
+        elif self.editable and t in ("text", "select") and self.fields_at(i, px, py):
+            self._tmode = ("pick", self.fields_at(i, px, py)[0][0])       # Ziehen = verschieben, Klick = bearbeiten
+            self._set_fhover(None)
+            return
         if t == "select" or t in MARKUP:
             k, d = self.char_at(i, px, py)
             self.sel = (i, k, k) if k is not None and d < 40 else None
@@ -1603,6 +1824,38 @@ class PdfView(ExtraMixin, Gtk.Box):
         _i, sx, sy = self._drag
         px, py = sx + dx / self.zoom, sy + dy / self.zoom
         t = self.tool
+        m = self._tmode
+        if m:
+            e = self.edit
+            if m[0] == "pick" and (abs(dx) > 3 or abs(dy) > 3) and self.editable:
+                self.commit_edit()
+                self.start_edit(i, sx, sy, m[1][0], typing=False)
+                e = self.edit
+                self._tmode = m = ("move", e["x"], e["y"], True)
+            if m[0] == "move" and e:
+                g = self._geom_e()
+                bx1, by1, bx2, by2 = g["bounds"]
+                W, H = self.sizes[i]
+                nx, ny = m[1] + dx / self.zoom, m[2] + dy / self.zoom
+                ox, oy = bx1 - e["x"], by1 - e["y"]          # Lage der Umrandung relativ zum Ursprung
+                nx = max(-ox + 1, min(nx, W - (bx2 - e["x"]) - 1)) if (bx2 - bx1) < W else nx
+                ny = max(-oy + 1, min(ny, H - (by2 - e["y"]) - 1)) if (by2 - by1) < H else ny
+                e["x"], e["y"] = nx, ny
+                self.areas[i].queue_draw()
+            elif m[0] in ("sel", "word", "line") and e:
+                g = self._geom_e()
+                idx = self._index_at(g, e["text"], px, py)
+                if m[0] == "sel":
+                    e["cur"] = idx
+                elif m[0] == "word":
+                    lo, hi = self._word_bounds(e["text"], idx)
+                    if idx >= m[2]:
+                        e["sel"], e["cur"] = m[1], hi
+                    else:
+                        e["sel"], e["cur"] = m[2], lo
+                self._caret_on = True
+                self._edit_changed()
+            return
         if (t == "select" or t in MARKUP) and self.sel:
             k, _d = self.char_at(i, px, py)
             if k is not None:
@@ -1626,6 +1879,18 @@ class PdfView(ExtraMixin, Gtk.Box):
         px, py = sx + dx / self.zoom, sy + dy / self.zoom
         click = abs(dx) < 3 and abs(dy) < 3
         t = self.tool
+        m, self._tmode = self._tmode, None
+        if m and m[0] in ("sel", "word", "line"):
+            return
+        if m and m[0] == "move" and self.edit:
+            e = self.edit
+            if click and len(m) == 3:                          # nur angeklickt: nichts verschoben
+                e["x"], e["y"] = m[1], m[2]
+            if len(m) == 4:                                    # aufgenommenes Feld: fertig verschoben → ablegen
+                self.commit_edit()
+            else:
+                self.areas[e["i"]].queue_draw()
+            return
         if t == "select":
             if click:
                 self.sel = None
@@ -1648,14 +1913,10 @@ class PdfView(ExtraMixin, Gtk.Box):
                 self.sel = None
                 self._redraw_all()
         elif t == "text" and click:
-            e = self.edit
-            if e and e["i"] == i and self._edit_hit(px, py):
-                self._edit_click_cursor(px, py)
-            else:
-                self.commit_edit()
-                hit = [a for a, _ in self.annots_at(i, px, py)
-                       if a.get_annot_type() == _poppler().AnnotType.FREE_TEXT]
-                self.start_edit(i, px, py, hit[0] if hit else None)
+            self.commit_edit()
+            hit = [a for a, _ in self.annots_at(i, px, py)
+                   if a.get_annot_type() == _poppler().AnnotType.FREE_TEXT]
+            self.start_edit(i, px, py, hit[0] if hit else None)
         elif t == "note" and click:
             hit = [a for a, _ in self.annots_at(i, px, py) if a.get_annot_type() == _poppler().AnnotType.TEXT]
             self._open_input("note", i, px, py, hit[0] if hit else None)
@@ -1689,25 +1950,75 @@ class PdfView(ExtraMixin, Gtk.Box):
             hits = self.annots_at(i, px, py)
             if hits:
                 a = hits[0][0]
-                self.page(i).remove_annot(a)
-                self._push([("remove", i, a)])
+                grp = self.field_members(i, a) if a.get_annot_type() == _poppler().AnnotType.FREE_TEXT else [a]
+                for b in grp:
+                    self.page(i).remove_annot(b)
+                self._push([("remove", i, b) for b in grp])
                 self.hover = None
                 self._rerender(i)
 
+    def _count_click(self, i, x, y):
+        """Wievielter schneller Klick an derselben Stelle (Doppel-/Dreifachklick)."""
+        now = GLib.get_monotonic_time() / 1000
+        try:
+            limit = Gtk.Settings.get_default().props.gtk_double_click_time
+        except Exception:
+            limit = 400
+        l = self._lastclick
+        n = l[3] + 1 if l and l[0] == i and now - l[1] < limit and abs(x - l[2][0]) < 6 and abs(y - l[2][1]) < 6 else 1
+        self._lastclick = (i, now, (x, y), n)
+        return n
+
     def _motion(self, ctrl, x, y, i):
         px, py = self._pt(i, x, y)
-        if self.tool == "text":
+        t, e = self.tool, self.edit
+        if self.editable and t in ("text", "select") and not self._drag:
+            cursor, over = None, None
+            if e and e["i"] == i:
+                zone = self._edit_zone(self._geom_e(), px, py)
+                cursor = {"grip": "grab", "text": "text"}.get(zone)
+                over = zone
+                self._set_fhover(None)
+            else:
+                f = self.fields_at(i, px, py)
+                over = f[0] if f else None
+                self._set_fhover((i, f[0][1]) if f else None)
+                cursor = "grab" if f else None
+            if t == "text":
+                old = self.ghost
+                self.ghost = None if over else (i, px, py)
+                for g in (old, self.ghost):
+                    if g:
+                        self.areas[g[0]].queue_draw()
+            else:
+                link = None if over else self._link_at(i, px, py)
+                cursor = cursor or ("pointer" if link else "text")
+            self.areas[i].set_cursor_from_name(cursor or "text")
+        elif t == "text":
             old = self.ghost
             self.ghost = (i, px, py)
             for g in (old, self.ghost):
                 if g:
                     self.areas[g[0]].queue_draw()
-        elif self.tool == "erase":
+        elif t == "erase":
             hits = self.annots_at(i, px, py)
-            self._set_hover((i, hits[0][1]) if hits else None)
-        elif self.tool == "select" and not self._drag:
+            box = None
+            if hits:
+                a, box = hits[0]
+                if a.get_annot_type() == _poppler().AnnotType.FREE_TEXT:
+                    box = self._field_box(i, self.field_members(i, a))
+            self._set_hover((i, box) if box else None)
+        elif t == "select" and not self._drag:
             link = self._link_at(i, px, py)
             self.areas[i].set_cursor_from_name("pointer" if link else "text")
+
+    def _set_fhover(self, hv):
+        if hv != self.fhover:
+            old = self.fhover
+            self.fhover = hv
+            for x in (old, hv):
+                if x and x[0] < len(self.areas):
+                    self.areas[x[0]].queue_draw()
 
     def _set_hover(self, hv):
         if hv != self.hover:
@@ -1718,40 +2029,236 @@ class PdfView(ExtraMixin, Gtk.Box):
                     self.areas[x[0]].queue_draw()
 
     # ---------- Text direkt auf der Seite tippen ----------
-    def start_edit(self, i, x, y, old=None):
-        """Eingabe an (x, y) = linke obere Ecke beginnen. old = vorhandener Freitext, der bearbeitet wird:
-        er verschwindet solange aus der Seite und wird live neu gezeichnet."""
-        text = ""
+    # Ein Feld (self.edit) = {"i", "x", "y" (linke obere Ecke), "text", "fmt" (Formatierung je Zeichen), "cur",
+    # "sel" (Anker der Auswahl oder None), "olds" (Anmerkungen, aus denen es entstand), "orig", "pickup"}.
+    # Formatierung = (Schrift, Größe, Farbe, fett, kursiv).
+    def _cur_style(self):
+        return (self.font, self.font_size, self.colors["text"], self.bold, self.italic)
+
+    def _mc(self):
+        if getattr(self, "_mctx", None) is None:
+            import cairo
+            self._mctx = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
+        return self._mctx
+
+    _FOPTS = None
+
+    def _lay(self, cr, text, st, size=None):
+        """Pango-Layout für einen Lauf. Ohne gerundete Schriftmetrik, damit Breiten mit dem Zoom linear wachsen."""
+        lay = PangoCairo.create_layout(cr)
+        try:
+            if PdfView._FOPTS is None:
+                import cairo
+                o = cairo.FontOptions()
+                o.set_hint_metrics(cairo.HINT_METRICS_OFF)
+                o.set_hint_style(cairo.HINT_STYLE_NONE)
+                PdfView._FOPTS = o
+            PangoCairo.context_set_font_options(lay.get_context(), PdfView._FOPTS)
+            lay.context_changed()
+        except Exception:
+            pass
+        fd = Pango.FontDescription.from_string(st[0])
+        fd.set_absolute_size(max(1.0, st[1] if size is None else size) * Pango.SCALE)
+        if st[3]:
+            fd.set_weight(Pango.Weight.BOLD)
+        if st[4]:
+            fd.set_style(Pango.Style.ITALIC)
+        lay.set_font_description(fd)
+        lay.set_text(text, -1)
+        return lay
+
+    def _layout(self, cr, text, size_px):
+        return self._lay(cr, text, self._cur_style(), size_px)
+
+    def _geom_e(self):
+        e = self.edit
+        return self._geom(e["text"], e["fmt"], e["x"], e["y"])
+
+    def _geom(self, text, fmt, x, y, cr=None):
+        """Aufbau eines Feldes in Seitenkoordinaten – genau so, wie Poppler den Text später setzt (einfarbiges Feld: eine
+        Anmerkung, Zeilenvorschub aus text_metrics; gemischtes Feld: Läufe auf gemeinsamer Grundlinie).
+        -> {"lines": [{k, start, text, top, h, x, x2, st, runs: [{s, e, st, text, x, y, w, h}]}], "bounds", "ref"}"""
+        cr = cr or self._mc()
+        S = Pango.SCALE
+        dflt = fmt[0] if fmt else self._cur_style()
+        info, pos = [], 0
+        for line in text.split("\n"):
+            runs, s = [], pos
+            for j in range(pos, pos + len(line)):
+                if fmt[j] != fmt[s]:
+                    runs.append((s, j))
+                    s = j
+            if line:
+                runs.append((s, pos + len(line)))
+            nl = fmt[pos] if pos < len(fmt) else (fmt[-1] if fmt else dflt)
+            info.append((pos, line, runs, nl))
+            pos += len(line) + 1
+        first = [fmt[s] for s, _e in info[0][2]] or [info[0][3]]
+        ref = max(first, key=lambda s: s[1])
+        dx0, dy0, _a = text_metrics(ref[0], ref[3], ref[4])
+        ox, top = x + dx0 * ref[1], y + dy0 * ref[1]
+        lines = []
+        for k, (start, line, runs, nl) in enumerate(info):
+            parts = []
+            if runs:
+                for s, e in runs:
+                    st = fmt[s]
+                    lay = self._lay(cr, text[s:e], st)
+                    parts.append((s, e, st, lay.get_baseline() / S, lay.get_size()[0] / S, lay.get_size()[1] / S))
+            else:
+                lay = self._lay(cr, " ", nl)
+                parts.append((start, start, nl, lay.get_baseline() / S, 0.0, lay.get_size()[1] / S))
+            maxb = max(p[3] for p in parts)
+            adv = max(text_metrics(p[2][0], p[2][3], p[2][4])[2] * p[2][1] for p in parts)
+            cx, rs = ox, []
+            for s, e, st, b, w, h in parts:
+                rs.append({"s": s, "e": e, "st": st, "text": text[s:e], "x": cx, "y": top + (maxb - b), "w": w, "h": h})
+                cx += w
+            lines.append({"k": k, "start": start, "text": line, "top": top, "x": ox, "x2": cx, "st": nl,
+                          "h": max(r["y"] - top + r["h"] for r in rs), "runs": rs if runs else []})
+            top += adv
+        x2 = max(max(L["x2"] for L in lines), ox + ref[1] * 0.5)
+        return {"lines": lines, "bounds": (ox, lines[0]["top"], x2, lines[-1]["top"] + lines[-1]["h"]), "ref": ref}
+
+    def _caret_pos(self, g, text, c):
+        """(x, y, Höhe, Format) des Cursors vor Zeichen c."""
+        L = g["lines"][text.count("\n", 0, c)]
+        if not L["runs"]:
+            return L["x"], L["top"], L["h"], L["st"]
+        r = next((r for r in L["runs"] if r["s"] <= c <= r["e"]), L["runs"][-1])
+        lay = self._lay(self._mc(), r["text"], r["st"])
+        pos, _w = lay.get_cursor_pos(len(r["text"][:max(0, c - r["s"])].encode()))
+        return r["x"] + pos.x / Pango.SCALE, r["y"], r["h"], r["st"]
+
+    def _index_at(self, g, text, x, y):
+        k = 0
+        for n, L in enumerate(g["lines"]):
+            if y >= L["top"]:
+                k = n
+        L = g["lines"][k]
+        if not L["runs"] or x <= L["x"]:
+            return L["start"]
+        for r in L["runs"]:
+            if x < r["x"] + r["w"] or r is L["runs"][-1]:
+                lay = self._lay(self._mc(), r["text"], r["st"])
+                _in, idx, trailing = lay.xy_to_index(int((x - r["x"]) * Pango.SCALE), 0)
+                col = len(r["text"].encode()[:idx].decode(errors="ignore")) + trailing
+                return r["s"] + min(col, len(r["text"]))
+        return L["start"] + len(L["text"])
+
+    def _sel_rects(self, g, text, lo, hi):
+        """Rechtecke der Auswahl lo..hi (Seitenkoordinaten, oben-links)."""
+        out = []
+        for L in g["lines"]:
+            end = L["start"] + len(L["text"])
+            size = L["st"][1]
+            if not L["runs"]:
+                if lo <= L["start"] < hi:
+                    out.append((L["x"], L["top"], L["x"] + size * 0.3, L["top"] + L["h"]))
+                continue
+            for r in L["runs"]:
+                a, b = max(lo, r["s"]), min(hi, r["e"])
+                if a < b:
+                    lay = self._lay(self._mc(), r["text"], r["st"])
+                    xa = r["x"] + lay.get_cursor_pos(len(r["text"][:a - r["s"]].encode()))[0].x / Pango.SCALE
+                    xb = r["x"] + lay.get_cursor_pos(len(r["text"][:b - r["s"]].encode()))[0].x / Pango.SCALE
+                    out.append((xa, L["top"], xb, L["top"] + L["h"]))
+            if lo <= end < hi:                                  # Zeilenumbruch mit ausgewählt
+                out.append((L["x2"], L["top"], L["x2"] + size * 0.3, L["top"] + L["h"]))
+        return out
+
+    def _selrange(self):
+        e = self.edit
+        a = e.get("sel") if e else None
+        if a is None or a == e["cur"]:
+            return None
+        return min(a, e["cur"]), max(a, e["cur"])
+
+    @staticmethod
+    def _kind(ch):
+        return 0 if ch.isspace() else (1 if (ch.isalnum() or ch == "_") else 2)
+
+    def _word_bounds(self, t, c):
+        if not t:
+            return 0, 0
+        j = min(c, len(t) - 1)
+        if c > 0 and self._kind(t[j]) == 0 and self._kind(t[c - 1]) != 0:
+            j = c - 1
+        kd = self._kind(t[j])
+        lo, hi = j, j + 1
+        while lo > 0 and self._kind(t[lo - 1]) == kd and t[lo - 1] != "\n":
+            lo -= 1
+        while hi < len(t) and self._kind(t[hi]) == kd and t[hi] != "\n":
+            hi += 1
+        return lo, hi
+
+    @staticmethod
+    def _word_left(t, c):
+        j = c
+        while j > 0 and t[j - 1].isspace():
+            j -= 1
+        while j > 0 and not t[j - 1].isspace():
+            j -= 1
+        return j
+
+    @staticmethod
+    def _word_right(t, c):
+        j = c
+        while j < len(t) and not t[j].isspace():
+            j += 1
+        while j < len(t) and t[j].isspace():
+            j += 1
+        return j
+
+    def start_edit(self, i, x, y, old=None, typing=True):
+        """Eingabe an (x, y) = linke obere Ecke beginnen. old = vorhandenes Textfeld (eine seiner Anmerkungen), das
+        bearbeitet wird: es verschwindet solange aus der Seite und wird live neu gezeichnet."""
+        text, fmt, olds = "", [], []
         if old is not None:
-            r = old.get_rectangle()
-            x, y = r.x1, self.sizes[i][1] - r.y2
-            text = old.get_contents() or ""
-            try:
-                fd = old.get_font_desc()
-                if fd and fd.font_name:
-                    fam = fd.font_name
-                    self.font = next((f for _n, f in FONTS if f.lower() == fam.lower()), fam)
-                if fd and fd.size_pt:
-                    self.font_size = fd.size_pt
-            except Exception:
-                pass
-            col = _hex_of(old.get_font_color())
-            if col:
-                self.colors["text"] = col
-            self.page(i).remove_annot(old)
+            olds = self.field_members(i, old)
+            fb = self._cur_style()
+            if len(olds) == 1:
+                a = olds[0]
+                st = annot_style(a, fb)
+                text = a.get_contents() or ""
+                fmt = [st] * len(text)
+                r = a.get_rectangle()
+                x, y = r.x1, self.sizes[i][1] - r.y2
+            else:
+                rows = {}
+                for a in olds:
+                    lab = parse_label(a)
+                    rows.setdefault(lab["line"], []).append((lab["idx"], a.get_contents() or "", annot_style(a, fb)))
+                prev = annot_style(olds[0], fb)
+                for k in range(max(rows) + 1):
+                    if k:
+                        text += "\n"
+                        fmt.append(prev)
+                    for _n, t, st in sorted(rows.get(k, []), key=lambda r: r[0]):
+                        text += t
+                        fmt += [st] * len(t)
+                        prev = st
+                lab = parse_label(olds[0])
+                x, y = lab["x"], lab["y"]
+            if fmt:
+                self.font, self.font_size, self.colors["text"], self.bold, self.italic = fmt[0]
+            for a in olds:
+                self.page(i).remove_annot(a)
             self._rerender(i)
         else:
             y -= self.font_size * 0.5          # Klickpunkt = Mitte der ersten Zeile
-        self.edit = {"i": i, "x": x, "y": max(0, y), "text": text, "cur": len(text), "old": old,
-                     "orig": (text, self.font, self.font_size, self.colors["text"])}
+        y = max(0, y)
+        self.edit = {"i": i, "x": x, "y": y, "text": text, "fmt": fmt, "cur": len(text), "sel": None, "olds": olds,
+                     "orig": (text, tuple(fmt), round(x, 2), round(y, 2)), "pickup": not typing}
         self.ghost = None
-        self.keys.set_im_context(self.im)
-        self.im.set_client_widget(self.areas[i])
-        self.im.focus_in()
-        self.grab_focus()
-        self._caret_on = True
-        if not self._blink_id:
-            self._blink_id = GLib.timeout_add(530, self._blink)
+        if typing:
+            self.keys.set_im_context(self.im)
+            self.im.set_client_widget(self.areas[i])
+            self.im.focus_in()
+            self.grab_focus()
+            self._caret_on = True
+            if not self._blink_id:
+                self._blink_id = GLib.timeout_add(530, self._blink)
         self._sync_tools()
         self.areas[i].queue_draw()
 
@@ -1785,15 +2292,17 @@ class PdfView(ExtraMixin, Gtk.Box):
         if not e:
             return
         self._stop_edit()
-        i, old, text = e["i"], e["old"], e["text"].rstrip()
-        unchanged = (e["text"], self.font, self.font_size, self.colors["text"]) == e["orig"]
-        if old is not None and unchanged:
-            self._restore(i, old)
+        i, olds = e["i"], e["olds"]
+        n = len(e["text"].rstrip())
+        text, fmt = e["text"][:n], e["fmt"][:n]
+        unchanged = (e["text"], tuple(e["fmt"]), round(e["x"], 2), round(e["y"], 2)) == e["orig"]
+        if olds and unchanged:
+            for a in olds:
+                self._restore(i, a)
         else:
-            ops = [("remove", i, old)] if old is not None else []
+            ops = [("remove", i, a) for a in olds]
             if text.strip():
-                a = self._make_free_text(i, e["x"], e["y"], text, self.font, self.font_size, self.colors["text"])
-                ops.append(("add", i, a))
+                ops += [("add", i, a) for a in self._make_field(i, e["x"], e["y"], text, fmt)]
             if ops:
                 self._push(ops)
         self._rerender(i)
@@ -1804,28 +2313,105 @@ class PdfView(ExtraMixin, Gtk.Box):
         if not e:
             return
         self._stop_edit()
-        if e["old"] is not None:
-            self.font, self.font_size, self.colors["text"] = e["orig"][1:]
-            self._restore(e["i"], e["old"])
+        if e["olds"]:
+            if e["orig"][1]:
+                self.font, self.font_size, self.colors["text"], self.bold, self.italic = e["orig"][1][0]
+            for a in e["olds"]:
+                self._restore(e["i"], a)
             self._rerender(e["i"])
         self._sync_tools()
 
-    def _edit_style(self):
-        if self.edit:
-            self.areas[self.edit["i"]].queue_draw()
+    def _edit_changed(self):
+        """Nach jeder Änderung an Cursor/Auswahl/Text: neu zeichnen, Werkzeugleiste auf die Auswahl abstimmen."""
+        e = self.edit
+        if not e:
+            return
+        rng = self._selrange()
+        if e["fmt"]:
+            st = e["fmt"][rng[0] if rng else 0]
+            cur = self._cur_style()
+            if st != cur:
+                self.font, self.font_size, self.colors["text"], self.bold, self.italic = st
+                self._sync_style_widgets()
+        self.areas[e["i"]].queue_draw()
+
+    def _fmt_apply(self, idx, val):
+        """Eine Eigenschaft (0 Schrift, 1 Größe, 2 Farbe, 3 fett, 4 kursiv) auf die Auswahl setzen – ohne Auswahl aufs ganze Feld."""
+        e = self.edit
+        if not e or not e["fmt"]:
+            return
+        lo, hi = self._selrange() or (0, len(e["fmt"]))
+        for j in range(lo, hi):
+            s = list(e["fmt"][j])
+            s[idx] = val
+            e["fmt"][j] = tuple(s)
+        self.areas[e["i"]].queue_draw()
+
+    def _toggle_fmt(self, which):
+        val = not getattr(self, which)
+        setattr(self, which, val)
+        self._fmt_apply(3 if which == "bold" else 4, val)
+        self._sync_style_widgets()
+
+    def _on_fmt(self, which, active):
+        if self._syncing or getattr(self, which) == active:
+            return
+        setattr(self, which, active)
+        if self.tool == "text":
+            self._fmt_apply(3 if which == "bold" else 4, active)
+
+    def _edit_replace(self, lo, hi, text):
+        e = self.edit
+        if e["fmt"]:
+            st = e["fmt"][lo] if (hi > lo or lo == 0) else e["fmt"][lo - 1]     # Auswahl ersetzen: Stil ihres Anfangs
+        else:
+            st = self._cur_style()
+        e["text"] = e["text"][:lo] + text + e["text"][hi:]
+        e["fmt"][lo:hi] = [st] * len(text)
+        e["cur"], e["sel"] = lo + len(text), None
 
     def _edit_insert(self, text):
         e = self.edit
         if not e:
             return
-        e["text"] = e["text"][:e["cur"]] + text + e["text"][e["cur"]:]
-        e["cur"] += len(text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        lo, hi = self._selrange() or (e["cur"], e["cur"])
+        self._edit_replace(lo, hi, text)
         self._caret_on = True
-        self.areas[e["i"]].queue_draw()
+        self._edit_changed()
+
+    def _edit_delete_sel(self):
+        rng = self._selrange()
+        if not rng:
+            return False
+        self._edit_replace(rng[0], rng[1], "")
+        return True
+
+    def _edit_copy(self, cut=False):
+        e = self.edit
+        rng = self._selrange()
+        if not rng:
+            return
+        self.get_clipboard().set_content(Gdk.ContentProvider.new_for_bytes(
+            "text/plain;charset=utf-8", GLib.Bytes.new(e["text"][rng[0]:rng[1]].encode())))
+        if cut:
+            self._edit_delete_sel()
+
+    def _edit_paste(self):
+        def got(cb, res):
+            try:
+                text = cb.read_text_finish(res)
+            except GLib.Error:
+                return
+            if text and self.edit:
+                self._edit_insert(text)
+        self.get_clipboard().read_text_async(None, got)
 
     def _edit_key(self, k, keyval, ctrl, shift):
         e = self.edit
         t, cur = e["text"], e["cur"]
+        rng = self._selrange()
+        lk = k.lower()
         if k in ("Return", "KP_Enter"):
             if ctrl:
                 self.commit_edit()
@@ -1835,46 +2421,86 @@ class PdfView(ExtraMixin, Gtk.Box):
         if k == "Escape":
             self.commit_edit()
             return True
-        if k == "BackSpace" and cur > 0:
-            n = 1
-            if ctrl:                                  # ganzes Wort
-                j = cur
-                while j > 0 and t[j - 1].isspace():
-                    j -= 1
-                while j > 0 and not t[j - 1].isspace():
-                    j -= 1
-                n = cur - j
-            e["text"], e["cur"] = t[:cur - n] + t[cur:], cur - n
+        new = None
+        if ctrl and lk == "a":
+            e["sel"], e["cur"] = 0, len(t)
+        elif ctrl and lk == "c":
+            self._edit_copy()
+            return True
+        elif ctrl and lk == "x":
+            self._edit_copy(cut=True)
+        elif ctrl and lk == "v":
+            self._edit_paste()
+            return True
+        elif ctrl and lk in ("b", "i"):
+            self._toggle_fmt("bold" if lk == "b" else "italic")
+            return True
         elif k == "BackSpace":
-            pass
+            if not self._edit_delete_sel() and cur > 0:
+                n = cur - self._word_left(t, cur) if ctrl else 1
+                self._edit_replace(cur - n, cur, "")
         elif k == "Delete":
-            e["text"] = t[:cur] + t[cur + 1:]
+            if not self._edit_delete_sel() and cur < len(t):
+                n = self._word_right(t, cur) - cur if ctrl else 1
+                self._edit_replace(cur, cur + n, "")
         elif k == "Left":
-            e["cur"] = max(0, cur - 1)
+            new = rng[0] if (rng and not shift and not ctrl) else (self._word_left(t, cur) if ctrl else max(0, cur - 1))
         elif k == "Right":
-            e["cur"] = min(len(t), cur + 1)
+            new = rng[1] if (rng and not shift and not ctrl) else (self._word_right(t, cur) if ctrl else min(len(t), cur + 1))
         elif k == "Home":
-            e["cur"] = t.rfind("\n", 0, cur) + 1
+            new = 0 if ctrl else t.rfind("\n", 0, cur) + 1
         elif k == "End":
             j = t.find("\n", cur)
-            e["cur"] = len(t) if j < 0 else j
+            new = len(t) if (ctrl or j < 0) else j
         elif k in ("Up", "Down"):
             lines = t.split("\n")
             ln = t.count("\n", 0, cur)
             col = cur - (t.rfind("\n", 0, cur) + 1)
-            ln2 = max(0, min(len(lines) - 1, ln + (-1 if k == "Up" else 1)))
-            e["cur"] = sum(len(l) + 1 for l in lines[:ln2]) + min(col, len(lines[ln2]))
-        elif ctrl and k.lower() == "a":
-            e["cur"] = len(t)
-        elif ctrl and k.lower() in ("s", "z", "y"):
+            if k == "Up" and ln == 0:
+                new = 0
+            elif k == "Down" and ln == len(lines) - 1:
+                new = len(t)
+            else:
+                ln2 = ln + (-1 if k == "Up" else 1)
+                new = sum(len(l) + 1 for l in lines[:ln2]) + min(col, len(lines[ln2]))
+        elif ctrl and lk in ("s", "z", "y"):
             return False                              # Speichern/Rückgängig wie gewohnt
         elif ctrl or k in ("Tab", "ISO_Left_Tab", "Page_Up", "Page_Down", "Prior", "Next"):
             return False
         else:
             return True                               # sonstige Tasten nicht als Werkzeug-Kürzel deuten
+        if new is not None:
+            if shift:
+                if e["sel"] is None:
+                    e["sel"] = cur
+            else:
+                e["sel"] = None
+            e["cur"] = new
         self._caret_on = True
-        self.areas[e["i"]].queue_draw()
+        self._edit_changed()
         return True
+
+    def _grip_box(self, g):
+        z = self.zoom
+        s, pad = 13 / z, 3
+        x1, y1 = g["bounds"][0], g["bounds"][1]
+        if y1 - pad - s >= 0:
+            return (x1 - pad - s * 0.5, y1 - pad - s, x1 - pad + s * 0.5, y1 - pad)
+        return (x1 - pad - s, y1 - pad, x1 - pad, y1 - pad + s)
+
+    def _edit_zone(self, g, x, y):
+        """Wo liegt der Punkt am Feld? "text" (Eingabe/Auswahl), "grip" (Griff und Rand: verschieben) oder None."""
+        z = self.zoom
+        gb = self._grip_box(g)
+        if gb[0] <= x <= gb[2] and gb[1] <= y <= gb[3]:
+            return "grip"
+        x1, y1, x2, y2 = g["bounds"]
+        if x1 - 1 <= x <= x2 + 1 and y1 - 1 <= y <= y2 + 1:
+            return "text"
+        m = 3 + 6 / z
+        if x1 - m <= x <= x2 + m and y1 - m <= y <= y2 + m:
+            return "grip"
+        return None
 
     def ist_caret(self):
         """Für die animierte Cursor-Ebene (glass.py): Cursor des Direkt-Textes auf der Seite."""
@@ -1894,89 +2520,64 @@ class PdfView(ExtraMixin, Gtk.Box):
             self.ghost = None
             self.areas[i].queue_draw()
 
-    def _layout(self, cr, text, size_px):
-        lay = PangoCairo.create_layout(cr)
-        fd = Pango.FontDescription.from_string(self.font)
-        fd.set_absolute_size(max(1.0, size_px) * Pango.SCALE)
-        lay.set_font_description(fd)
-        lay.set_text(text, -1)
-        return lay
+    def _draw_grip(self, cr, g, z, edit):
+        x1, y1, x2, y2 = self._grip_box(g)
+        cr.set_source_rgba(0.24, 0.52, 1.0, 0.9 if edit else 0.6)
+        rad = 3
+        X, Y, W, H = x1 * z, y1 * z, (x2 - x1) * z, (y2 - y1) * z
+        cr.new_sub_path()
+        cr.arc(X + W - rad, Y + rad, rad, -1.5708, 0)
+        cr.arc(X + W - rad, Y + H - rad, rad, 0, 1.5708)
+        cr.arc(X + rad, Y + H - rad, rad, 1.5708, 3.1416)
+        cr.arc(X + rad, Y + rad, rad, 3.1416, 4.7124)
+        cr.close_path()
+        cr.fill()
+        cr.set_source_rgba(1, 1, 1, 0.95)
+        for cx in (X + W * 0.35, X + W * 0.65):
+            for cy in (Y + H * 0.25, Y + H * 0.5, Y + H * 0.75):
+                cr.arc(cx, cy, 1.0, 0, 6.2832)
+                cr.fill()
 
-    def _edit_lines(self):
-        """[(Zeilentext, Ursprung x, Ursprung y)] in Seitenkoordinaten – genau wie Poppler den Text später setzt."""
-        e = self.edit
-        dx, dy, adv = text_metrics(self.font)
-        sz = self.font_size
-        return [(line, e["x"] + dx * sz, e["y"] + dy * sz + k * adv * sz)
-                for k, line in enumerate(e["text"].split("\n"))]
-
-    def _edit_bounds(self, cr=None):
-        import cairo
-        cr = cr or cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
-        lines = self._edit_lines()
-        sz = self.font_size
-        w = max([self._layout(cr, l or " ", sz).get_pixel_extents()[1].width for l, _, _ in lines] + [sz * 0.5])
-        x1, y1 = lines[0][1], lines[0][2]
-        return x1, y1, x1 + w, lines[-1][2] + self._layout(cr, "Hg", sz).get_pixel_extents()[1].height
-
-    def _edit_hit(self, x, y):
-        x1, y1, x2, y2 = self._edit_bounds()
-        return x1 - 4 <= x <= x2 + 4 and y1 - 4 <= y <= y2 + 4
-
-    def _edit_click_cursor(self, x, y):
-        """Klick in den Text setzt den Cursor dorthin."""
-        import cairo
-        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
-        lines = self._edit_lines()
-        sz = self.font_size
-        k = 0
-        for n, (_l, _ox, oy) in enumerate(lines):
-            if y >= oy:
-                k = n
-        line, ox, _oy = lines[k]
-        lay = self._layout(cr, line, sz)
-        _inside, idx, trailing = lay.xy_to_index(int((x - ox) * Pango.SCALE), 0)
-        col = len(line.encode()[:idx].decode(errors="ignore")) + trailing
-        self.edit["cur"] = sum(len(l) + 1 for l, _, _ in lines[:k]) + min(col, len(line))
-        self._caret_on = True
-        self.areas[self.edit["i"]].queue_draw()
+    def _draw_frame(self, cr, g, z, alpha=0.55):
+        x1, y1, x2, y2 = g["bounds"]
+        pad = 3
+        cr.set_source_rgba(0.24, 0.52, 1.0, alpha)
+        cr.set_line_width(1)
+        cr.set_dash([3, 3])
+        cr.rectangle((x1 - pad) * z + 0.5, (y1 - pad) * z + 0.5, (x2 - x1 + 2 * pad) * z - 1, (y2 - y1 + 2 * pad) * z - 1)
+        cr.stroke()
+        cr.set_dash([])
 
     def _draw_edit(self, cr, z):
         e = self.edit
-        r, g, b = _rgb(self.colors["text"])
-        sz = self.font_size
-        lines = self._edit_lines()
-        x1, y1, x2, y2 = self._edit_bounds(cr)
-        # dezenter Rahmen, damit man sieht, wo getippt wird (landet nicht im PDF)
-        cr.set_source_rgba(0.24, 0.52, 1.0, 0.55)
-        cr.set_line_width(1)
-        cr.set_dash([3, 3])
-        cr.rectangle(x1 * z - 4.5, y1 * z - 3.5, (x2 - x1) * z + 9, (y2 - y1) * z + 7)
-        cr.stroke()
-        cr.set_dash([])
-        cr.set_source_rgb(r, g, b)
-        pos = 0
-        caret = None
-        for line, ox, oy in lines:
-            lay = self._layout(cr, line, sz * z)
-            cr.move_to(ox * z, oy * z)
-            PangoCairo.show_layout(cr, lay)
-            if caret is None and e["cur"] <= pos + len(line):
-                bi = len(line[:e["cur"] - pos].encode())
-                strong, _weak = lay.get_cursor_pos(bi)
-                caret = (ox * z + strong.x / Pango.SCALE, oy * z + strong.y / Pango.SCALE, strong.height / Pango.SCALE)
-            pos += len(line) + 1
-        self._caret_at = (self.areas[e["i"]], caret[0], caret[1], caret[2], (r, g, b)) if caret else None
-        if caret and self._caret_on and not (glass and glass.caret_active(self)):      # sonst zeichnet die Cursor-Ebene (glass.py)
-            cx, cy, ch = caret
-            cr.set_source_rgb(r, g, b)
+        g = self._geom_e()
+        rng = self._selrange()
+        if rng:
+            cr.set_source_rgba(0.24, 0.52, 1.0, 0.35)
+            for a, b, c, d in self._sel_rects(g, e["text"], *rng):
+                cr.rectangle(a * z, b * z, (c - a) * z, (d - b) * z)
+            cr.fill()
+        self._draw_frame(cr, g, z)
+        for L in g["lines"]:
+            for r in L["runs"]:
+                st = r["st"]
+                cr.set_source_rgb(*_rgb(st[2]))
+                cr.move_to(r["x"] * z, r["y"] * z)
+                PangoCairo.show_layout(cr, self._lay(cr, r["text"], st, st[1] * z))
+        cx, cy, ch, cst = self._caret_pos(g, e["text"], e["cur"])
+        cx, cy, ch = cx * z, cy * z, ch * z
+        r, gg, b = _rgb(cst[2])
+        self._caret_at = (self.areas[e["i"]], cx, cy, ch, (r, gg, b)) if not e["pickup"] else None
+        if self._caret_at and self._caret_on and not self._selrange() and not (glass and glass.caret_active(self)):
+            cr.set_source_rgb(r, gg, b)       # sonst zeichnet die Cursor-Ebene (glass.py)
             cr.rectangle(round(cx), cy, max(1.0, z * 0.9), ch)
             cr.fill()
         if not e["text"]:
-            cr.set_source_rgba(r, g, b, 0.35)
-            hint = self._layout(cr, "  tippen …", sz * z * 0.8)
-            cr.move_to(lines[0][1] * z + 2, lines[0][2] * z + sz * z * 0.12)
+            cr.set_source_rgba(r, gg, b, 0.35)
+            hint = self._layout(cr, "  tippen …", cst[1] * z * 0.8)
+            cr.move_to(g["lines"][0]["x"] * z + 2, g["lines"][0]["top"] * z + cst[1] * z * 0.12)
             PangoCairo.show_layout(cr, hint)
+        self._draw_grip(cr, g, z, True)
 
     def _draw_ghost(self, cr, z):
         """Unter der Maus: so hoch wird der Text (Cursor in Schriftgröße + kleines „Aa“)."""
@@ -1985,7 +2586,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         r, g, b = _rgb(self.colors["text"])
         lay = self._layout(cr, "Aa", sz * z)
         _ink, log = lay.get_pixel_extents()
-        top = (y - sz * 0.5) * z + text_metrics(self.font)[1] * sz * z
+        top = (y - sz * 0.5) * z + text_metrics(self.font, self.bold, self.italic)[1] * sz * z
         cr.set_source_rgba(r, g, b, 0.85)
         cr.rectangle(round(x * z), top, max(1.0, z * 0.9), log.height)
         cr.fill()
@@ -2031,7 +2632,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         rng = self.sel_range()
         return bool((rng and rng[0] == i) or (self.live and self.live[0] == i) or (self.edit and self.edit["i"] == i)
                     or (self.ghost and self.ghost[0] == i and self.tool == "text")
-                    or (self.hover and self.hover[0] == i) or self.extra_active(i))
+                    or (self.hover and self.hover[0] == i) or (self.fhover and self.fhover[0] == i) or self.extra_active(i))
 
     def _draw_overlay(self, area, cr, w, h, i):
         z = self.zoom
@@ -2064,6 +2665,11 @@ class PdfView(ExtraMixin, Gtk.Box):
             self._draw_edit(cr, z)
         elif self.ghost and self.ghost[0] == i and self.tool == "text":
             self._draw_ghost(cr, z)
+        if self.fhover and self.fhover[0] == i and not self.edit:
+            x1, y1, x2, y2 = self.fhover[1]
+            g = {"bounds": (x1, y1, x2, y2)}
+            self._draw_frame(cr, g, z, 0.5)
+            self._draw_grip(cr, g, z, False)
         self.extra_draw(cr, z, i)
         if self.hover and self.hover[0] == i:
             x1, y1, x2, y2 = self.hover[1]
@@ -2082,17 +2688,18 @@ class PdfView(ExtraMixin, Gtk.Box):
             return True
         focus = self.get_root().get_focus() if self.get_root() else None
         typing = isinstance(focus, Gtk.Text) or isinstance(focus, Gtk.TextView)
-        if not typing and not c and k in ("Left", "Right") and not (mods & Gdk.ModifierType.ALT_MASK):
-            self.goto(self.current_page() + (1 if k == "Right" else -1))
-        elif not typing and not c and k in ("Up", "Down"):
+        if not typing and not c and k in ("Left", "Right") and not (mods & Gdk.ModifierType.ALT_MASK) \
+                and self._nav_ok(focus):
+            self.skip_page(1 if k == "Right" else -1)
+        elif not typing and not c and k in ("Up", "Down") and self._nav_ok(focus):
             va = self.scroll.get_vadjustment()
             step = 80 * (5 if s else 1)
             va.set_value(max(va.get_lower(), min(va.get_value() + (step if k == "Down" else -step),
                                                  va.get_upper() - va.get_page_size())))
         elif k in ("Page_Down", "Next"):
-            self.goto(self.current_page() + 1)
+            self.skip_page(1)
         elif k in ("Page_Up", "Prior"):
-            self.goto(self.current_page() - 1)
+            self.skip_page(-1)
         elif c and k in ("plus", "equal", "KP_Add"):
             self.set_zoom(self.zoom * 1.25)
         elif c and k in ("minus", "KP_Subtract"):

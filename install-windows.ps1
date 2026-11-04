@@ -1,4 +1,4 @@
-﻿# install-windows.ps1 – installiert scourge, notist, datist oder musicalist unter Windows 10/11.
+﻿# install-windows.ps1 – installiert scourge, notist, datist, musicalist oder mobilist unter Windows 10/11.
 # Starten: Doppelklick auf install-windows.bat   (Entfernen: uninstall-windows.bat)
 # Ablauf: MSYS2 (liefert GTK 4 + Python für Windows) einrichten → Pakete → App nach %USERPROFILE%\.local\share
 # kopieren → Startmenü-Verknüpfung. Admin-Rechte braucht nur die einmalige MSYS2-Installation.
@@ -73,8 +73,18 @@ if (Test-Path "$Src\app\scourge.py") {
         Copy-Fonts "$Src\app\fonts" "$Share\rice-apps\fonts"
         Copy-Item "$Src\musicalist.ico" $App.Dir -Force
     }
+} elseif (Test-Path "$Src\app\mobilist.py") {
+    # mobilist: Leihräder + Bahnen. Daten (gesammelte Flotte, Einstellungen) liegen getrennt in .local\share\mobilist-data
+    # und .config\mobilist und überleben Updates. Der Sammler läuft als Aufgabe „mobilist-leih“ beim Anmelden (aus der App
+    # heraus eingerichtet: Reiter räder → Sammler starten). Ohne Abfahrtstafel auf dem Desktop (braucht layer-shell).
+    $App = @{ Name = 'mobilist'; Dir = "$Share\mobilist"; Main = 'mobilist.py'; Icon = 'mobilist.ico'; Fonts = $null
+              Pkgs = $Base + @('python-numpy') }
+    $Copy = {
+        Copy-Item "$Src\app\*" $App.Dir -Recurse -Force
+        Copy-Item "$Src\mobilist.ico" $App.Dir -Force
+    }
 } else {
-    throw 'Dieses Skript gehört in den Ordner von scourge, notist, datist oder musicalist.'
+    throw 'Dieses Skript gehört in den Ordner von scourge, notist, datist, musicalist oder mobilist.'
 }
 $Programs = [Environment]::GetFolderPath('Programs')
 $Desktop = [Environment]::GetFolderPath('Desktop')
@@ -90,6 +100,11 @@ if ($Uninstall) {
         Remove-Item -Recurse -Force $App.Dir -ErrorAction SilentlyContinue
     }
     Remove-Item -Force "$Programs\$Lnk", "$Desktop\$Lnk" -ErrorAction SilentlyContinue
+    if ($App.Name -eq 'mobilist') {      # Sammler-Aufgabe und -Prozess beenden
+        Native { schtasks /Delete /TN mobilist-leih /F 2>&1 | Out-Null }
+        $pidf = "$Share\mobilist-data\collector.pid"
+        if (Test-Path $pidf) { Native { taskkill /PID (Get-Content $pidf) /F 2>&1 | Out-Null } }
+    }
     Say "$($App.Name) entfernt. Deine Daten/Einstellungen und MSYS2 (C:\msys64) bleiben."
     return
 }

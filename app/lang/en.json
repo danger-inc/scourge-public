@@ -396,7 +396,6 @@
 "Text mit dem Textmarker markieren": "Highlight text with the marker",
 "Text unterstreichen": "Underline text",
 "Text durchstreichen": "Strike through text",
-"Text (Schrift) auf die Seite setzen – Klick auf vorhandenen Text bearbeitet ihn": "Put text on the page – clicking existing text edits it",
 "Gespeicherte Unterschrift per Klick auf die Seite setzen (Größe: Breite)": "Place the saved signature on the page with a click (size: width)",
 "Bereiche aufziehen, die endgültig geschwärzt werden sollen": "Draw areas that are to be redacted for good",
 "Anmerkung anklicken, um sie zu entfernen": "Click an annotation to remove it",
@@ -1119,5 +1118,8 @@
 "ordner-scan": "folder scan",
 "osint": "osint",
 "Fertige Google-Suchen nach deinem Namen, Nutzernamen, deiner E-Mail und Telefonnummer": "Ready-made Google searches for your name, user name, email and phone number",
-"Inhaltssuche, GPS-Tracks, E-Mail-Kopfzeilen (Absender-IP), Editor-Pfade, Entfernen versteckter Metadaten": "Content search, GPS tracks, email headers (sender IP), editor paths, removal of hidden metadata"
+"Inhaltssuche, GPS-Tracks, E-Mail-Kopfzeilen (Absender-IP), Editor-Pfade, Entfernen versteckter Metadaten": "Content search, GPS tracks, email headers (sender IP), editor paths, removal of hidden metadata",
+"Text auf die Seite setzen – Klick auf ein Textfeld bearbeitet es, Ziehen verschiebt es, Auswahl im Feld lässt sich einzeln formatieren": "Place text on the page – click a text box to edit it, drag to move it, format any selection inside it separately",
+"Fett (Strg+B) – gilt für die Auswahl im Textfeld": "Bold (Ctrl+B) – applies to the selection in the text box",
+"Kursiv (Strg+I) – gilt für die Auswahl im Textfeld": "Italic (Ctrl+I) – applies to the selection in the text box"
 }

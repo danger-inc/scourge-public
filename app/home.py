@@ -66,6 +66,7 @@ SYSTEM = [
     ("󰍹", "Bildschirm, Ton & Funk", "Helligkeit, Lautstärke, Mikrofon, WLAN und Bluetooth", "devices"),
     ("󰍽", "Eingabe", "Maus-Empfindlichkeit, Touchpad und Tastaturlayout", "input"),
     ("\U000F01BF", "Cursor", "Farbe, Größe und Verhalten des Mauszeigers", "cursor"),
+    ("󰔟", "Animationen & Energie", "Desktop-Wechsel, Waybar-Pille, Wechsel-Animation, Energiesparmodus", "anim"),
     ("󰕮", "Waybar", "Statusleiste neu starten, wenn sie abgestürzt ist", "waybar"),
 ]
 
@@ -161,7 +162,7 @@ class HomePage(Gtk.ScrolledWindow):
         for icon, name, desc, section in SYSTEM:
             if section == "waybar" and not shutil.which("waybar"):
                 continue
-            if section in ("input", "cursor", "waybar") and not has_hyprland():    # nutzen hyprctl/hyprland.lua
+            if section in ("input", "cursor", "waybar", "anim") and not has_hyprland():    # nutzen hyprctl/hyprland.lua
                 continue
             if section == "cursor" and not os.path.exists(os.path.expanduser("~/.local/share/rice-apps/cursor/make-cursor.py")):
                 continue

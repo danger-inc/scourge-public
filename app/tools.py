@@ -136,9 +136,7 @@ CLASSES = {}
 
 
 # Eingabefeld je Werkzeug + Start-Methode – für prefill() (andere Apps übergeben einen Wert, z. B. mailist)
-PREFILL = {"email": ("mail", "check"), "domain": ("dom", "check"), "username": ("name", "search"),
-           "link": ("url", "check"), "archive": ("q", "check"), "phone": ("num", "check"),
-           "mailheader": ("text", "analyze")}
+PREFILL = {}
 
 
 def prefill(page, key, value):

@@ -89,6 +89,7 @@ SECTIONS = {
     "input": ("Eingabe", "Maus-Empfindlichkeit, Touchpad und Tastaturlayout."),
     "radio": ("Funk", "WLAN und Bluetooth."),
     "cursor": ("Cursor", "Mauszeiger und animierter Text-Cursor. Änderungen gelten sofort überall."),
+    "anim": ("Animationen & Energie", "Desktop-Wechsel, Waybar-Pille, Seitenwechsel in den Apps und Energiesparmodus."),
     "waybar": ("Waybar", "Statusleiste zurückholen, wenn sie abgestürzt oder hängen geblieben ist."),
 }
 
@@ -151,6 +152,7 @@ class SystemSettings(ToolPage):
             "radio": [self.radio_card],
             "cursor": [self.cursor_cards, self.caret_card],
             "waybar": [self.waybar_cards],
+            "anim": [self.anim_cards, self.eco_cards],
         }
         for b in builders.get(self.section, [self.display_card, self.audio_card, self.mouse_card,
                                              self.keyboard_card, self.radio_card, self.cursor_cards, self.caret_card]):
@@ -214,6 +216,102 @@ class SystemSettings(ToolPage):
         row.append(dd)
         parent.append(row)
         return dd
+
+    # ---------- Animationen ----------
+    def anim_cards(self):
+        import anim
+        self._anim = anim
+        cfg = anim.load()
+        self._acfg = cfg
+        hypr = bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
+
+        def commit(**kw):
+            cfg.update(kw)
+            self._debounce("anim", lambda: self.run(lambda: anim.apply(dict(cfg)), lambda r: None), 150)
+
+        if hypr:
+            c = self.card("Desktop-Wechsel")
+            self.switch_row(c, "Animation beim Wechsel", cfg["ws_on"], lambda s: commit(ws_on=s),
+                            "Aus = Desktops springen sofort um.")
+            row = Gtk.Box(spacing=6)
+            for name, vals in anim.PRESETS.items():
+                b = self.button(name, lambda *_a, v=vals: self._anim_preset(v, commit), "Voreinstellung")
+                row.append(b)
+            c.append(row)
+            styles = [l for _k, l in anim.STYLES]
+            keys = [k for k, _l in anim.STYLES]
+            self._dd_style = self.dropdown(c, "Art", styles, keys.index(cfg["ws_style"]),
+                                           lambda i: commit(ws_style=keys[i]))
+            curves = list(anim.CURVES)
+            self._dd_curve = self.dropdown(c, "Verlauf", [anim.CURVE_LABELS[k] for k in curves],
+                                           curves.index(cfg["ws_curve"]), lambda i: commit(ws_curve=curves[i]))
+            self._sl_ms = self.slider(c, "Dauer", 100, 1000, cfg["ws_ms"], lambda v: commit(ws_ms=int(v)),
+                                      step=10, unit=" ms")
+            self._sl_pct = self.slider(c, "Überblenden – Weg der Fläche", 5, 60, cfg["ws_pct"],
+                                       lambda v: commit(ws_pct=int(v)), step=5, unit=" %")
+            n = Gtk.Label(label="Weg der Fläche gilt nur bei „Schieben + Überblenden“: wie weit das Bild beim "
+                                "Ausblenden wegrutscht. Längere Dauer + „Sanft“ wirkt am flüssigsten. "
+                                "Auch 3-Finger-Wischen und Super+Scroll nutzen diese Animation.",
+                          xalign=0, wrap=True)
+            n.add_css_class("note")
+            c.append(n)
+
+        if hypr or shutil.which("waybar"):
+            c = self.card("Waybar-Pille")
+            self.switch_row(c, "Übergang der Markierung", cfg["pill_on"], lambda s: commit(pill_on=s),
+                            "Die Markierung des aktiven Desktops wechselt weich statt zu springen. "
+                            "Ab Desktop 5 rutscht das Fenster weiter (2 3 4 5).")
+            pk = [k for k, _l in anim.PILL_MODES]
+            self._dd_pill = self.dropdown(c, "Art", [l for _k, l in anim.PILL_MODES], pk.index(cfg["pill_mode"]),
+                                          lambda i: commit(pill_mode=pk[i]))
+            self._sl_pill = self.slider(c, "Dauer", 80, 800, cfg["pill_ms"], lambda v: commit(pill_ms=int(v)),
+                                        step=10, unit=" ms")
+            n = Gtk.Label(label="Gleiten: die Markierung wandert von Feld zu Feld. Mit Federn überschwingt sie leicht. "
+                                "Überblenden: alte und neue Markierung wechseln gleich schnell. Nachleuchten: die neue "
+                                "kommt schnell, die alte klingt langsam aus.", xalign=0, wrap=True)
+            n.add_css_class("note")
+            c.append(n)
+
+    def _anim_preset(self, vals, commit):
+        commit(**vals)
+        keys = [k for k, _l in self._anim.STYLES]
+        curves = list(self._anim.CURVES)
+        self._dd_style.set_selected(keys.index(vals["ws_style"]))
+        self._dd_curve.set_selected(curves.index(vals["ws_curve"]))
+        self._sl_ms.set_value(vals["ws_ms"])
+        self._sl_pct.set_value(vals["ws_pct"])
+        if "pill_mode" in vals and getattr(self, "_dd_pill", None):
+            self._dd_pill.set_selected([k for k, _l in self._anim.PILL_MODES].index(vals["pill_mode"]))
+        if "pill_ms" in vals and getattr(self, "_sl_pill", None):
+            self._sl_pill.set_value(vals["pill_ms"])
+
+    # ---------- Energiesparmodus & App-Animation ----------
+    def eco_cards(self):
+        try:
+            import istheme as ist
+        except Exception:
+            return
+        c = self.card("Energiesparmodus")
+        cfg = ist.eco_cfg()
+        self.switch_row(c, "Energiesparmodus", cfg["on"], lambda s: self.run(lambda: ist.eco_set(s), lambda r: None),
+                        "Gilt für alle Apps und die Leiste (Akku-Menü schaltet dasselbe).")
+        self.switch_row(c, "Energieprofil „Stromsparen“", cfg["profile"],
+                        lambda s: self.run(lambda: ist.eco_option("profile", bool(s)), lambda r: None),
+                        "powerprofilesctl: weniger CPU-Takt.")
+        self.switch_row(c, "Desktop-Animationen & Blur aus", cfg["hypr"],
+                        lambda s: self.run(lambda: ist.eco_option("hypr", bool(s)), lambda r: None),
+                        "Im Sparmodus keine Fensteranimation, kein Blur.")
+        self.slider(c, "Automatisch einschalten bei ≤ (0 = nie)", 0, 50, cfg["auto_at"],
+                    lambda v: self._debounce("ecoat", lambda: self.run(
+                        lambda: ist.eco_option("auto_at", int(v)), lambda r: None), 300),
+                    step=5, unit=" % Akku")
+
+        c = self.card("Seitenwechsel in den Apps")
+        sc = ist.swipe_cfg()
+        self.switch_row(c, "Wechsel-Animation", sc["on"], lambda s: ist.swipe_set(on=bool(s)),
+                        "Überblendung beim Farb-/Themenwechsel der ganzen Suite.")
+        self.slider(c, "Dauer", 0.5, 3.0, sc["sec"], lambda v: ist.swipe_set(sec=round(v * 4) / 4),
+                    step=0.25, fmt="{:.2f}", digits=2, unit=" s")
 
     # ---------- Anzeige ----------
     def display_card(self):

@@ -1,5 +1,28 @@
 # scourge – Änderungen
 
+## 2.23.0 (2026-11-04)
+- **Textfelder im PDF-Editor**: Ein Textfeld lässt sich jetzt per Ziehen **verschieben** (über dem Feld erscheint ein blauer Rahmen mit Griff; Klick bearbeitet wie bisher, Ziehen am Griff oder Rand verschiebt auch während des Tippens). Im Feld gibt es eine **Auswahl** (Maus ziehen, Doppelklick = Wort, Dreifachklick = Zeile, Umschalt+Pfeile, Strg+Pfeile für Wörter, Strg+A/C/X/V). **Teile eines Feldes** lassen sich einzeln formatieren – Schrift, Größe, Farbe, fett (Strg+B) und kursiv (Strg+I); ohne Auswahl gilt die Änderung fürs ganze Feld. Gemischt formatierte Felder bleiben nach Speichern und Wiederöffnen bearbeitbar.
+- **Umrandung enger am Inhalt**: Rahmen beim Tippen, beim Überfahren und beim Radierer passen jetzt genau um den gesetzten Text (statt um den PDF-Rahmen mit Luft); auch die Trefferfläche zum Anklicken.
+- **Pfeiltasten blättern exakt**: Links/Rechts (und Bild ↑/↓) springen immer eine Seite, auch nach Hochscrollen oder auf den letzten Seiten; die Seitenpositionen summierten sich bei Seiten mit Nachkommastellen (A4) um bis zu einen Pixel pro Seite, wodurch die Ansicht „ein bisschen“ danebenlag.
+
+## 2.22.0 (2026-11-03)
+- Interne Verbesserungen und Aufräumarbeiten.
+
+## 2.21.0 (2026-11-03)
+- Interne Verbesserungen und Aufräumarbeiten.
+
+## 2.20.0 (2026-11-03)
+- Interne Verbesserungen und Aufräumarbeiten.
+
+## 2.19.1 (2026-11-03)
+- **Waybar-Pille ohne Breitenschwankung**: Beim Wechsel wurde die mittlere Insel kurz 1–2 px schmaler (GTK rundet die gegenläufigen Paddings einzeln ab). Das Wachsen des aktiven Felds läuft jetzt in ganzen Pixelstufen; „Federn“ ist wieder Variante C (Farbe federt, Feld wächst).
+- **Waybar-Pille gleitet**: neue Pillen-Arten „Gleiten“ und „Gleiten mit Federn“ (Standard). Eine einzige, durchgehende Pille wandert von Feld zu Feld (jedes Feld zeichnet dieselbe Pille, um die Entfernung zur aktiven Zahl verschoben); workspace.py gibt dazu je Feld die Klassen active/p0/pp1…/pm1… aus.
+- **Straffe Feder** ist jetzt der Standard für den Desktop-Wechsel (Schieben, steife Feder), mit federnder Waybar-Pille. Neu in „Animationen & Energie“: Art der Pille (Überblenden, Nachleuchten, Federn) und die Voreinstellung „Straffe Feder".
+
+## 2.19.0 (2026-11-02)
+- **Animationen & Energie** (System & Hardware): Desktop-Wechsel einstellbar – Art (Schieben, Schieben + Überblenden, Senkrecht, Überblenden), Verlauf (Sanft, Gleiten, Weich, Federnd, Linear), Dauer in ms und Voreinstellungen. Gilt auch für 3-Finger-Wischen und Super+Scroll. Standard = Original (Überblenden, 190 ms); weichere Voreinstellungen wählbar. Messung: Hyprland rechnet beim Wechsel mit ~100 % eines Kerns, daher wirken längere Animationen ruckelig. Dazu Energiesparmodus (Profil, Animationen/Blur aus, automatisch bei x % Akku) und die Wechsel-Animation der Apps an einer Stelle.
+- **Waybar-Pille**: Die Markierung des aktiven Desktops blendet weich über (Dauer einstellbar). Ab Desktop 5 bleiben die vier Felder stehen und rutschen durch (2 3 4 5), statt dass die aktive Nummer fehlt; innerhalb des Fensters bleibt es ruhig.
+
 ## 2.18.1 (2026-11-02)
 - **Ruckelfreie Aufnahme**: Während einer Bildschirmaufnahme liefen alle Animationen zäh, weil `wf-recorder` den Compositor mit rund 90 % CPU auslastete. Scourge nimmt jetzt mit `wl-screenrec` auf, sobald es installiert ist (Hyprland bleibt dabei bei ca. 20 %); sonst weiter mit `wf-recorder`. Der Installer bietet es optional an (`cargo install wl-screenrec --root ~/.local`). Bei ruhigem Bildschirm speichert es weniger Bilder pro Sekunde (variable Bildrate).
 
