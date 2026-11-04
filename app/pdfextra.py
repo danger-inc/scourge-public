@@ -505,7 +505,7 @@ class ExtraMixin:
         self.show_forms = True
         self._form_cache = {}
         self.side_btn = self._btn("󰕮", "Seitenleiste: Miniaturen, Gliederung, Treffer (F9)", self.toggle_side)
-        self.bar.prepend(self.side_btn)
+        getattr(self, 'nav', self.bar).prepend(self.side_btn)
         if self.editable:
             self._build_extra_menu()
             self._build_redact_bar()

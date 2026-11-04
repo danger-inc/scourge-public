@@ -156,14 +156,18 @@ class PdfTab(Gtk.Box):
 
     def shutdown(self):
         try:
+            self.view.pos_save()
             self.view.cancel_edit()
         except Exception:
             pass
 
 
 class PdfApp(Gtk.Application):
-    def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_OPEN)
+    def __init__(self, extra=False):
+        # extra = zusätzliches Fenster („in neuem Fenster öffnen“): eigener Prozess, eigene ID, beendet sich beim Schließen
+        self.extra = extra
+        super().__init__(application_id=APP_ID + (f".w{os.getpid()}" if extra else ""),   # eigene ID = eigener, erreichbarer Prozess
+                         flags=Gio.ApplicationFlags.HANDLES_OPEN)
         self.win = None
         self.daemon = False
         self._held = False
@@ -249,6 +253,7 @@ class PdfApp(Gtk.Application):
         self.win.connect("close-request", self.on_close_request)
         Gtk.Window.set_default_icon_name("scourge")
         for name, cb, keys in (("open", lambda *_: self.on_open(), ["<Control>o", "<Control>t"]),
+                               ("fullscreen", lambda *_: self.set_fullscreen(not self.fs), ["F11"]),
                                ("close_tab", lambda *_: self.close_tab(), ["<Control>w"]),
                                ("quit", lambda *_: self.win.close(), ["<Control>q"])):
             act = Gio.SimpleAction.new(name, None)
@@ -275,6 +280,7 @@ class PdfApp(Gtk.Application):
         self.notebook.set_action_widget(brand, Gtk.PackType.START)
         right = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER, margin_start=10)
         right.append(ch.button("󰐕 öffnen", "PDF in neuem Tab öffnen (Strg+O)", action="win.open"))
+        right.append(ch.button("󰊓", "Vollbild – nur das PDF ansehen (F11, Esc beendet)", action="win.fullscreen"))
         try:
             self.version = open(os.path.join(HERE, "VERSION")).read().strip()
         except OSError:
@@ -314,9 +320,50 @@ class PdfApp(Gtk.Application):
         sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.EXTERNAL, vscrollbar_policy=Gtk.PolicyType.NEVER,
                                 propagate_natural_height=True)
         sc.set_child(status)
-        root.append(Gtk.WindowHandle(child=sc))      # GNOME/KDE: hier lässt sich das Fenster ziehen
+        self.status_bar = Gtk.WindowHandle(child=sc)
+        root.append(self.status_bar)                 # GNOME/KDE: hier lässt sich das Fenster ziehen
+        esc = Gtk.EventControllerKey()               # Esc beendet das Vollbild (vor dem PDF, solange nichts getippt wird)
+        esc.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        esc.connect("key-pressed", self._fs_key)
+        self.win.add_controller(esc)
         getattr(glass, "make_movable", lambda *a: None)(self.win, self.notebook)
         self.new_tab()
+
+    # ---------- Vollbild: nur das PDF ----------
+    fs = False
+
+    def _fs_key(self, _c, keyval, _code, _mods):
+        if self.fs and keyval == Gdk.KEY_Escape:
+            tab = self.current()
+            if tab is not None and getattr(tab.view, "edit", None):
+                return False
+            self.set_fullscreen(False)
+            return True
+        return False
+
+    def set_fullscreen(self, on):
+        tab = self.current()
+        if on and (tab is None or not tab.path):
+            return self.notify("Erst ein PDF öffnen.")
+        if bool(on) == self.fs:
+            return
+        self.fs = bool(on)
+        if on:
+            tab.view.set_tool("select") if tab.view.editable else None
+            tab.view.sel = None
+        self.notebook.set_show_tabs(not on)
+        self.status_bar.set_visible(not on)
+        for t in self.tabs():
+            t.view.set_bars_visible(not on)
+            for side in ("margin_top", "margin_bottom", "margin_start", "margin_end"):
+                setattr(t, side, 0 if on else (8 if side in ("margin_top", "margin_bottom") else 14))
+        if on:
+            self.win.fullscreen()
+            self.notify("Esc beendet das Vollbild")
+        else:
+            self.win.unfullscreen()
+        if tab:
+            tab.view.grab_focus()
 
     # ---------- Tabs ----------
     def tabs(self):
@@ -341,10 +388,18 @@ class PdfApp(Gtk.Application):
         middle = Gtk.GestureClick(button=2)
         middle.connect("released", lambda *_: self.close_tab(tab))
         box.add_controller(middle)
-        # Rechtsklick / Doppelklick (Doppeltipp) = Tab umbenennen
+        # Rechtsklick = Menü, Doppelklick (Doppeltipp) = Tab umbenennen
         ren = Gtk.GestureClick(button=0)
-        ren.connect("pressed", lambda g, n, x, y: (g.get_current_button() == 3 or (g.get_current_button() == 1 and n == 2))
-                    and (g.set_state(Gtk.EventSequenceState.CLAIMED), self.rename_tab(tab, box)))
+
+        def pressed(g, n, x, y):
+            b = g.get_current_button()
+            if b == 3:
+                g.set_state(Gtk.EventSequenceState.CLAIMED)
+                self.tab_menu(tab, box, x, y)
+            elif b == 1 and n == 2:
+                g.set_state(Gtk.EventSequenceState.CLAIMED)
+                self.rename_tab(tab, box)
+        ren.connect("pressed", pressed)
         box.add_controller(ren)
         tab._tab_key, tab._tab_label = key, lbl
         i = self.notebook.append_page(tab, box)
@@ -364,6 +419,69 @@ class PdfApp(Gtk.Application):
         tab._tab_label.set_tooltip_text(tab.path or name)
         if tab is self.current():
             self.win.set_title(f"{name} – scourge-pdf")
+
+    def tab_menu(self, tab, anchor, x=0, y=0):
+        """Rechtsklick auf einen Tab: Dropdown mit „in neuem Fenster öffnen“ und weiteren Tab-Aktionen."""
+        pop = Gtk.Popover(has_arrow=False, autohide=True, halign=Gtk.Align.START)
+        pop.add_css_class("pdf-pop")
+        pop.add_css_class("formats")
+        pop.set_parent(anchor)
+        r = Gdk.Rectangle()
+        r.x, r.y, r.width, r.height = int(x), int(y), 1, 1
+        pop.set_pointing_to(r)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.add_css_class("pdf-pop-box")
+        has = bool(tab.path)
+
+        def item(label, cb, enabled=True, tip=""):
+            b = Gtk.Button(label=label, tooltip_text=tip, halign=Gtk.Align.FILL, sensitive=enabled, focus_on_click=False)
+            b.add_css_class("pb"); b.add_css_class("small")
+            b.get_child().set_xalign(0)
+            b.connect("clicked", lambda *_: (pop.popdown(), GLib.idle_add(lambda: (cb(), False)[-1])))
+            box.append(b)
+        item("󰏌  in neuem Fenster öffnen", lambda: self.open_in_new_window(tab), has,
+             "Dieses PDF in einem eigenen Fenster öffnen (der Tab hier wird geschlossen)")
+        item("󰑕  umbenennen", lambda: self.rename_tab(tab, anchor), True, "Nur die Beschriftung (Doppelklick)")
+        item("󰉋  im Ordner zeigen", lambda: self.show_in_folder(tab), has)
+        item("󰆏  Pfad kopieren", lambda: (self.win.get_clipboard().set(tab.path), self.notify("Pfad kopiert.")), has)
+        box.append(Gtk.Separator())
+        item("󰅖  tab schließen", lambda: self.close_tab(tab))
+        item("󰍟  andere tabs schließen", lambda: self.close_others(tab), len(self.tabs()) > 1)
+        pop.set_child(box)
+        pop.connect("closed", lambda p: GLib.idle_add(p.unparent))
+        pop.popup()
+
+    def show_in_folder(self, tab):
+        import subprocess
+        try:
+            subprocess.Popen(["xdg-open", os.path.dirname(os.path.abspath(tab.path))], start_new_session=True)
+        except OSError:
+            self.notify("Ordner ließ sich nicht öffnen.")
+
+    def close_others(self, keep):
+        for t in list(self.tabs()):
+            if t is not keep:
+                self.close_tab(t)
+
+    def open_in_new_window(self, tab):
+        """Eigenes Fenster (eigener Prozess): Ungespeichertes wird vorher gesichert, danach schließt der Tab hier."""
+        if not tab.path:
+            return
+        path = tab.path
+
+        def go():
+            import subprocess
+            try:
+                if os.name == "nt":
+                    subprocess.Popen([sys.executable.replace("python.exe", "pythonw.exe"), os.path.abspath(__file__),
+                                      "--new-window", path])
+                else:
+                    subprocess.Popen([sys.executable, os.path.abspath(__file__), "--new-window", path],
+                                     start_new_session=True)
+            except OSError as e:
+                return self.notify(f"Neues Fenster ließ sich nicht öffnen: {e}")
+            self.close_tab(tab, force=True)
+        self.confirm_unsaved([tab], go)
 
     def rename_tab(self, tab, anchor):
         """Kleines Eingabefeld am Tab; leer lassen = wieder der Dateiname."""
@@ -481,7 +599,7 @@ class PdfApp(Gtk.Application):
         if self._quitting:
             return False
         import settings_menu
-        if not settings_menu.background_mode("pdf_background"):
+        if self.extra or not settings_menu.background_mode("pdf_background"):
             self.really_quit()
             return True
 
@@ -555,6 +673,11 @@ if __name__ == "__main__":
             sys.exit(0)
         app.daemon = True
         code = app.run([sys.argv[0]])
+        sys.stdout.flush(); sys.stderr.flush()
+        os._exit(code)
+    if "--new-window" in sys.argv:
+        sys.argv.remove("--new-window")
+        code = PdfApp(extra=True).run(sys.argv)
         sys.stdout.flush(); sys.stderr.flush()
         os._exit(code)
     code = PdfApp().run(sys.argv)

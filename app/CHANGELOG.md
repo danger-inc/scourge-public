@@ -1,5 +1,20 @@
 # scourge – Änderungen
 
+## 2.25.0 (2026-11-04)
+- **scourge-pdf: Vollbild** (F11 oder Knopf 󰊓 oben): nur das PDF, ohne Tabs, Kopfzeile und Statuszeile; Esc beendet.
+- **Unabhängige Instanzen**: Ein von außen geöffnetes PDF (Dateimanager, `scourge-pdf datei.pdf`) wird nur dann als neuer Tab in einer Instanz geöffnet, wenn deren Fenster auf dem aktuellen Workspace liegt – sonst startet eine eigene neue Instanz.
+- **OSINT-Knopf in scourge-pdf** öffnet den neuen **Datei-Check in reconist** (Metadaten, Autor, GPS, versteckter Text, Bereinigen).
+- **Schriftgröße bis 500 pt** (vorher 72).
+- **Strg+C nach dem Markieren** funktioniert sofort (auch aus dem Auswahl-Menü heraus und nach dem Textmarker).
+- **Langer Text** bleibt beim Speichern in einer Zeile (kein Umbruch am Rahmen mehr), und der Cursor sitzt auch in langen Zeilen genau: die Zeichenbreiten werden nicht mehr gerundet.
+
+## 2.24.0 (2026-11-04)
+- **Rechtsklick auf einen PDF-Tab** öffnet ein Menü: **in neuem Fenster öffnen** (eigenes Fenster, der Tab hier schließt), umbenennen (weiter auch per Doppelklick), im Ordner zeigen, Pfad kopieren, Tab schließen, andere Tabs schließen.
+- **Aufgeräumte Kopfzeile im PDF-Editor**: Seiten, Zoom, Suche und Speichern/Rückgängig sitzen in eigenen Behältern in einer Zeile, darunter Werkzeuge und Stil (Farbe, Schrift, Größe); leere Behälter werden ausgeblendet.
+- **Leseposition wird gemerkt**: Seite, Stelle und Zoom je Datei – auch nach Tab zu, Hintergrund oder erneutem Öffnen (z. B. aus dem Dateimanager im Vollbild).
+- **Pfeiltasten Hoch/Runter scrollen weich** (gleiten aufs Ziel, auch bei gehaltener Taste) statt in ruckelnden Sprüngen.
+- **Cursor im Textfeld** sitzt jetzt auf Schrifthöhe an der Stelle des nächsten Buchstabens und folgt dem Tippen sofort.
+
 ## 2.23.0 (2026-11-04)
 - **Textfelder im PDF-Editor**: Ein Textfeld lässt sich jetzt per Ziehen **verschieben** (über dem Feld erscheint ein blauer Rahmen mit Griff; Klick bearbeitet wie bisher, Ziehen am Griff oder Rand verschiebt auch während des Tippens). Im Feld gibt es eine **Auswahl** (Maus ziehen, Doppelklick = Wort, Dreifachklick = Zeile, Umschalt+Pfeile, Strg+Pfeile für Wörter, Strg+A/C/X/V). **Teile eines Feldes** lassen sich einzeln formatieren – Schrift, Größe, Farbe, fett (Strg+B) und kursiv (Strg+I); ohne Auswahl gilt die Änderung fürs ganze Feld. Gemischt formatierte Felder bleiben nach Speichern und Wiederöffnen bearbeitbar.
 - **Umrandung enger am Inhalt**: Rahmen beim Tippen, beim Überfahren und beim Radierer passen jetzt genau um den gesetzten Text (statt um den PDF-Rahmen mit Luft); auch die Trefferfläche zum Anklicken.

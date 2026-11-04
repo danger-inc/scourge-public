@@ -69,6 +69,42 @@ for a in "$@"; do
     esac
 done
 join() { local IFS=,; echo "[$*]"; }
-gdbus call --session --timeout 3 --dest "$APP" --object-path "$OBJ" \
-    --method org.freedesktop.Application.Open "$(join "${uris[@]}")" "{}" >/dev/null 2>&1 && { shown || restart "$@"; exit 0; }
+
+# Jede Instanz ist unabhängig: PDFs landen nur dann als neuer Tab in einer Instanz, wenn deren Fenster auf dem
+# Workspace liegt, auf dem geöffnet wird. Sonst: ruht die Hintergrund-Instanz (kein Fenster), übernimmt sie;
+# hat sie ein Fenster woanders, startet eine neue, eigene Instanz (--new-window).
+target() {
+    command -v hyprctl >/dev/null || { echo "$APP"; return; }
+    local ws cls wins
+    ws=$(hyprctl activeworkspace -j 2>/dev/null | grep -o '"id": *-\?[0-9]\+' | head -1 | grep -o '\-\?[0-9]\+$')
+    [ -z "$ws" ] && { echo "$APP"; return; }
+    wins=$(hyprctl clients -j 2>/dev/null | python3 -c '
+import json, sys
+ws, app = int(sys.argv[1]), sys.argv[2]
+try:
+    cl = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+mine = [c for c in cl if c.get("class", "").startswith(app) and c.get("mapped", True)]
+here = [c for c in mine if c.get("workspace", {}).get("id") == ws]
+print("here:" + here[0]["class"] if here else ("any" if mine else "none"))
+' "$ws" "$APP" 2>/dev/null)
+    case "$wins" in
+        here:*) echo "${wins#here:}" ;;
+        any) echo NEW ;;
+        *) echo "$APP" ;;
+    esac
+}
+dest=$(target)
+if [ "$dest" = NEW ]; then
+    setsid -f python3 "$MAIN" --new-window "$@" >>"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
+    exit 0
+fi
+OBJ="/${dest//./\/}"
+gdbus call --session --timeout 3 --dest "$dest" --object-path "$OBJ" \
+    --method org.freedesktop.Application.Open "$(join "${uris[@]}")" "{}" >/dev/null 2>&1 && { [ "$dest" != "$APP" ] || shown || restart "$@"; exit 0; }
+if [ "$dest" != "$APP" ]; then      # Instanz antwortet nicht: eigene neue Instanz, die Hauptinstanz bleibt unberührt
+    setsid -f python3 "$MAIN" --new-window "$@" >>"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
+    exit 0
+fi
 restart "$@"
