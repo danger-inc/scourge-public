@@ -148,7 +148,9 @@ REPOS = {
 }
 UPDATE_FILE = os.path.expanduser("~/.cache/ist-updates.json")
 UPDATE_EVERY = 6 * 3600
-UPDATE_HINT = "./update.sh im repo-ordner"
+# Paketverwaltung statt eigenem Installer (z. B. IST_PACKAGED=nix aus dem Nix-Paket): kein Update-Knopf-Installer
+PACKAGED = os.environ.get("IST_PACKAGED", "")
+UPDATE_HINT = {"nix": "nix flake update + rebuild"}.get(PACKAGED, "./update.sh im repo-ordner")
 _updates = {}          # app → neuere Version (für das Changelog-Fenster)
 
 
@@ -271,6 +273,8 @@ def check_update(key, version, callback, force=False, none=None):
 
 
 def update_text(latest):
+    if PACKAGED:
+        return f"v{latest} ist da – {UPDATE_HINT}"
     return f"v{latest} ist da – oben neben der Version auf „update“ klicken"
 
 
@@ -283,6 +287,8 @@ def _installer():
     Modul nehmen, sonst die nächste Kopie (App-Ordner, rice-apps, scourge)."""
     global _installer_mod
     import sys
+    if PACKAGED:            # Paketverwaltung zuständig → Knopf öffnet nur die Repo-Seite
+        return None
     if "suite_install" in sys.modules:
         return sys.modules["suite_install"]
     if _installer_mod is None:

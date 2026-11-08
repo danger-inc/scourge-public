@@ -250,7 +250,7 @@ class SidePanel(Gtk.Box):
         # --- Gliederung
         self.outline_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, activate_on_single_click=True)
         self.outline_list.add_css_class("thumbs")
-        self.outline_list.connect("row-activated", lambda lb, row: self.view.goto(row.page, y_in_page=row.top))
+        self.outline_list.connect("row-activated", lambda lb, row: self.view.goto(row.page, y_in_page=row.top, smooth=True))
         osc = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         osc.set_child(self.outline_list)
         self.outline_empty = Gtk.Label(label="Dieses PDF hat keine Lesezeichen.", wrap=True, margin_top=12)
@@ -309,7 +309,7 @@ class SidePanel(Gtk.Box):
     def _selected(self, lb):
         sel = self.selected_pages()
         if len(sel) == 1 and not getattr(self, "_quiet", False):
-            self.view.goto(sel[0])
+            self.view.goto(sel[0], smooth=True)
 
     # ---------- Aufbau
     def rebuild(self):

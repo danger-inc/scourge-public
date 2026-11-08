@@ -1,5 +1,20 @@
 # scourge – Änderungen
 
+## 2.27.0 (2026-11-06)
+- **Zeitleiste wie in DaVinci Resolve**: Mausrad/Trackpad scrollt die Zeitleiste seitwärts, Strg- oder Alt-Rad und Pinch zoomen genau an der Zeigerposition (bis auf Einzelbild-Ebene, 128×), mittlere Maustaste zieht die Ansicht, Umschalt-Rad scrollt die Spuren. Sichtbarer Scrollbalken, Zoomregler stufenlos, Knopf „Einpassen“; Tasten +/−, Umschalt+Z (alles zeigen), F (Auswahl füllt die Zeitleiste).
+- **Fehlende Schnittfunktionen**: Wiederholen (Strg+Y), Kopieren/Einfügen/Duplizieren (Strg+C/V/D), Auf/Ab springt zum vorigen/nächsten Schnittpunkt, Lautstärke (0–200 %) und Stumm (M) je Stück – in Vorschau, Export und Zwischenstand.
+
+## 2.26.0 (2026-11-04)
+- **Gleiche Höhen und Abstände**: Seiten, Zoom, Suche und Speichern-Container sind gleich hoch; Abstand Kopfzeile → obere Reihe → Werkzeugleiste → PDF-Anfang überall gleich.
+- **Kompakter**: Abstände zwischen Kopfzeile, Reihen und Seite halbiert, das PDF beginnt weiter oben (auch im halben Fenster).
+- **Halbes Fenster**: Seiten/Zoom und Suche/Aktionen stehen bei schmalem Fenster in eigenen Zeilen, jede Zeile so breit wie die Werkzeugleiste darunter, mit gleichen Abständen; nichts läuft mehr aus dem Bild.
+- **Kopfzeile bündig**: Die Suche füllt den freien Platz, die Werkzeugleiste ist eine durchgehende Leiste (Werkzeuge links, Stil rechts) – keine zufällig endenden Container mehr; Speicherstatus als kleiner Punkt statt langem Text.
+- **Kopfzeile springt nicht mehr**: Beim Wechsel des Werkzeugs (Text, Stift, Rahmen …) bleibt die Werkzeugleiste gleich hoch und breit, die Seite darunter rutscht nicht mehr. Rückgängig/Wiederholen/Speichern bleiben beim Statuswechsel („speichert …“, „gespeichert“) an ihrem Platz.
+- **Weicher Seitenwechsel**: Seite vor/zurück (Knöpfe, Pfeil links/rechts, Bild ↑/↓), Seite springen, Suchtreffer, Links, Gliederung und Miniaturen gleiten wie das Pfeiltasten-Scrollen.
+- **Rechtsklick auf der Seite** öffnet ein Menü: Textfeld bearbeiten/löschen, Markierung, Strich, Rahmen oder Notiz löschen, Auswahl kopieren/markieren, „text hier schreiben“; im Textfeld ausschneiden/kopieren/einfügen/Textfeld löschen.
+- **Unterstreichen im Textfeld**: Knopf U und Strg+U, auch für einzelne Wörter; bleibt beim Speichern, Bearbeiten und Verschieben erhalten.
+- **Waybar nach Vollbild**: Ein „volles Fenster“ (maximiert) zählt für die Waybar nicht mehr als Vollbild – nach F11 und Esc kommt sie zurück.
+
 ## 2.25.0 (2026-11-04)
 - **scourge-pdf: Vollbild** (F11 oder Knopf 󰊓 oben): nur das PDF, ohne Tabs, Kopfzeile und Statuszeile; Esc beendet.
 - **Unabhängige Instanzen**: Ein von außen geöffnetes PDF (Dateimanager, `scourge-pdf datei.pdf`) wird nur dann als neuer Tab in einer Instanz geöffnet, wenn deren Fenster auf dem aktuellen Workspace liegt – sonst startet eine eigene neue Instanz.

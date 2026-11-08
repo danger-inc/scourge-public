@@ -86,7 +86,7 @@ class PdfTab(Gtk.Box):
     """Ein Tab = ein PDF im Editor."""
 
     def __init__(self, app):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0, margin_top=8, margin_bottom=8,
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0, margin_top=4, margin_bottom=6,
                          margin_start=14, margin_end=14)
         self.app = app
         self.path = None
@@ -356,7 +356,7 @@ class PdfApp(Gtk.Application):
         for t in self.tabs():
             t.view.set_bars_visible(not on)
             for side in ("margin_top", "margin_bottom", "margin_start", "margin_end"):
-                setattr(t, side, 0 if on else (8 if side in ("margin_top", "margin_bottom") else 14))
+                setattr(t, side, 0 if on else (5 if side in ("margin_top", "margin_bottom") else 14))
         if on:
             self.win.fullscreen()
             self.notify("Esc beendet das Vollbild")

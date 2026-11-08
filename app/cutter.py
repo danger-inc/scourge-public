@@ -3,7 +3,7 @@
 # an Kanten und Abspielkopf, wählbar), über- und untereinander (Musik unter Gameplay), mit dem Schneiden-Werkzeug
 # teilt man per Klick. Die Vorschau läuft über eine Zeituhr: alle Stücke unter dem Abspielkopf spielen zugleich.
 # Export über ffmpeg (Bild: oberste Spur gewinnt, Ton: alle Spuren gemischt). Zwischenstände werden gespeichert.
-import hashlib, io, json, os, subprocess, threading, time
+import hashlib, io, json, math, os, subprocess, threading, time
 
 import cairo
 import gi
@@ -32,6 +32,7 @@ MAX_LANES = 6
 EDGE = 7                   # so nah (px) an einer Kante = Kante greifen
 SNAP_PX = 9                # magnetisch ab so vielen Pixeln
 MIN_LEN = 0.1
+MAX_ZOOM = 128.0           # Zeitleiste bis auf Einzelbild-Ebene zoomen
 DRAFTS = os.path.expanduser("~/.config/scourge/schnitt")
 
 
@@ -85,6 +86,9 @@ class CutterPage(Gtk.Box):
         self.path = None
         self.sel = None         # ausgewähltes Stück (dict) oder None
         self.undo_stack = []
+        self.redo_stack = []
+        self.clipboard = None
+        self._vol_lock = False
         self.dirty = False      # Änderungen seit dem letzten Zwischenspeichern
         self.draft_id = None
         self.dur = 0.0          # Länge = Ende des letzten Stücks
@@ -92,6 +96,7 @@ class CutterPage(Gtk.Box):
         self.fps = 30.0
         self.has_audio = self.has_video = False
         self.zoom = 1.0
+        self._zlock = False
         self.playhead = 0.0
         self.playing = False
         self.loop = True
@@ -159,6 +164,19 @@ class CutterPage(Gtk.Box):
         c.append(self.result_lbl)
         self.seg_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         c.append(self.seg_list)
+        vrow = Gtk.Box(spacing=8)
+        self.mute_btn = Gtk.ToggleButton(label="󰝟", tooltip_text="Ton dieses Stücks stumm (M)", focus_on_click=False)
+        self.mute_btn.add_css_class("pb"); self.mute_btn.add_css_class("small")
+        self.mute_btn.connect("toggled", lambda b: self._set_clip("mute", b.get_active()))
+        self.vol_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 200, 5)
+        self.vol_scale.set_draw_value(True); self.vol_scale.set_value_pos(Gtk.PositionType.RIGHT)
+        self.vol_scale.set_format_value_func(lambda sc, v: f"{int(v)} %")
+        self.vol_scale.set_hexpand(True); self.vol_scale.add_css_class("pb")
+        self.vol_scale.set_tooltip_text("Lautstärke des markierten Stücks")
+        self.vol_scale.connect("value-changed", lambda sc: self._set_clip("vol", sc.get_value() / 100))
+        vrow.append(self.mute_btn); vrow.append(self.vol_scale)
+        self.vol_row = vrow
+        c.append(vrow)
         row = Gtk.Box(spacing=6, homogeneous=True)
         row.append(self.button("󰑓  Von vorne", self.reset, "Alle Schnitte verwerfen, die Clips bleiben"))
         row.append(self.button("󰈔  Anderes Video", self.pick_other, "Dieses Projekt verwerfen und ein anderes öffnen"))
@@ -228,14 +246,16 @@ class CutterPage(Gtk.Box):
         self.loop_btn = self.toggle("󰑖", True, "Wiederholen: nach dem Ende wieder von vorn",
                                     lambda b: setattr(self, "loop", b.get_active()))
         items.append(self.loop_btn)
-        self.zoom_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1, 20, 0.5)
+        self.zoom_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, math.log2(MAX_ZOOM), 0.05)
         self.zoom_scale.set_draw_value(False)
         self.zoom_scale.set_size_request(120, -1)
         self.zoom_scale.add_css_class("pb")
-        self.zoom_scale.set_tooltip_text("Zeitleiste zoomen (auch Strg+Mausrad)")
-        self.zoom_scale.connect("value-changed", lambda s: self.set_zoom(s.get_value()))
+        self.zoom_scale.set_tooltip_text("Zeitleiste zoomen (Strg+Mausrad, Pinch, +/−)")
+        self.zoom_scale.connect("value-changed", lambda s: None if self._zlock else self.set_zoom(2 ** s.get_value()))
         items.append(Gtk.Label(label="󰍉"))
         items.append(self.zoom_scale)
+        items.append(self.button("Einpassen", self.zoom_fit, "Ganzen Schnitt zeigen (Umschalt+Z)"))
+        items.append(self.button("󰕍", self.redo, "Wiederholen (Strg+Y / Strg+Umschalt+Z)"))
         for w in items:
             tools.append(w)
         self.append(tools)
@@ -257,7 +277,9 @@ class CutterPage(Gtk.Box):
         self.append(handle)
         tl_frame = Gtk.Box(margin_start=16, margin_end=16, margin_bottom=16)
         tl_frame.add_css_class("timeline-frame")
-        self.tl_scroll = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.AUTOMATIC, hexpand=True)
+        self.tl_scroll = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC, hexpand=True,
+                                            overlay_scrolling=False)
         self.tl_scroll.set_size_request(-1, self.tl_h)
         self.timeline = Gtk.DrawingArea(content_height=self.tl_h - 14, focusable=True)
         self.timeline.set_draw_func(self.draw_timeline)
@@ -275,9 +297,17 @@ class CutterPage(Gtk.Box):
         motion.connect("motion", self.on_motion)
         motion.connect("leave", lambda *_: (setattr(self, "_hover_x", None), self.timeline.queue_draw()))
         self.timeline.add_controller(motion)
-        zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+        zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
         zoom.connect("scroll", self.on_scroll)
         self.timeline.add_controller(zoom)
+        pinch = Gtk.GestureZoom()                     # Trackpad: Pinch zoomt an der Fingerposition
+        pinch.connect("begin", lambda g, s: setattr(self, "_pz0", self.zoom))
+        pinch.connect("scale-changed", self.on_pinch)
+        self.timeline.add_controller(pinch)
+        pan = Gtk.GestureDrag(button=Gdk.BUTTON_MIDDLE)   # Mittlere Taste ziehen = Zeitleiste verschieben
+        pan.connect("drag-begin", lambda g, x, y: setattr(self, "_pan0", self.tl_scroll.get_hadjustment().get_value()))
+        pan.connect("drag-update", self.on_pan)
+        self.tl_scroll.add_controller(pan)
         keys = Gtk.EventControllerKey()
         keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)       # Leertaste soll immer abspielen/stoppen
         keys.connect("key-pressed", self.on_key)
@@ -335,7 +365,7 @@ class CutterPage(Gtk.Box):
         self.stop()
         self.shutdown()
         self.load_token += 1
-        self.sources, self.items, self.sel, self.undo_stack = [], [], None, []
+        self.sources, self.items, self.sel, self.undo_stack, self.redo_stack = [], [], None, [], []
         self.playhead, self.dirty = 0.0, False
         self.add_clips([path], fresh=True)
 
@@ -493,7 +523,7 @@ class CutterPage(Gtk.Box):
             if i["src"] > si:
                 i["src"] -= 1
         del self.sources[si]
-        self.undo_stack = []                    # Quellen-Nummern haben sich verschoben
+        self.undo_stack, self.redo_stack = [], []      # Quellen-Nummern haben sich verschoben
         self.sel = None
         self.cur_src, self._driving = None, {}
         self.mark_dirty()
@@ -565,7 +595,7 @@ class CutterPage(Gtk.Box):
 
     def project_dict(self):
         return {"sources": [c["path"] for c in self.sources],
-                "items": [{k: i[k] for k in ("src", "s", "e", "pos", "lane")} for i in self.items],
+                "items": [{k: i[k] for k in ("src", "s", "e", "pos", "lane", "vol", "mute") if k in i} for i in self.items],
                 "playhead": self.playhead, "saved": time.time()}
 
     def save_draft(self, quiet=False):
@@ -628,7 +658,7 @@ class CutterPage(Gtk.Box):
         self.stop()
         self.shutdown()
         self.load_token += 1
-        self.sources, self.items, self.sel, self.undo_stack = [], [], None, []
+        self.sources, self.items, self.sel, self.undo_stack, self.redo_stack = [], [], None, [], []
         for p in paths:
             c = self.probe(p)
             if c["has_video"]:
@@ -637,7 +667,10 @@ class CutterPage(Gtk.Box):
                 player.playable(p, "audio", lambda out, c=c: self._playable(c, out))
             self.sources.append(c)
         for i in data.get("items", []):
-            self.new_item(i["src"], i["s"], i["e"], i["pos"], i["lane"])
+            it = self.new_item(i["src"], i["s"], i["e"], i["pos"], i["lane"])
+            for k in ("vol", "mute"):
+                if k in i:
+                    it[k] = i[k]
         self.dirty = False
         self.afterload(False)
         token = self.load_token
@@ -703,6 +736,8 @@ class CutterPage(Gtk.Box):
 
     def mark_dirty(self, undoable=True):
         self.dirty = True
+        if undoable:
+            self.redo_stack = []
         self.recalc()
 
     # ================= Abspielen =================
@@ -794,6 +829,7 @@ class CutterPage(Gtk.Box):
             if m is None:
                 continue
             local = it["s"] + (T - it["pos"])
+            m.set_volume(0.0 if it.get("mute") else max(0.0, min(1.0, it.get("vol", 1.0))))
             if self.playing:
                 if self._driving.get(si) != it["id"] or force:
                     m.seek(int(local * 1e6))
@@ -857,11 +893,67 @@ class CutterPage(Gtk.Box):
     def undo(self):
         if self.undo_stack:
             self.stop()
+            self.redo_stack.append([dict(i) for i in self.items])
             self.items = self.undo_stack.pop()
             self.sel = None
-            self.mark_dirty()
+            self.mark_dirty(False)
             self.refresh_list()
             self.update_time()
+
+    def redo(self):
+        if self.redo_stack:
+            self.stop()
+            self.undo_stack.append([dict(i) for i in self.items])
+            self.items = self.redo_stack.pop()
+            self.sel = None
+            self.mark_dirty(False)
+            self.refresh_list()
+            self.update_time()
+            self.seek(self.playhead)
+        else:
+            self.tab.notify("Nichts zu wiederholen.")
+
+    # ----- Kopieren / Duplizieren / Springen
+    def copy_sel(self):
+        if not self.sel:
+            return self.tab.notify("Erst ein Stück anklicken.")
+        self.clipboard = dict(self.sel)
+        self.tab.notify("Stück kopiert (Strg+V fügt am Abspielkopf ein).")
+
+    def paste(self, at=None, lane=None):
+        c = self.clipboard
+        if not c:
+            return self.tab.notify("Nichts kopiert.")
+        self.stop()
+        self.save_undo()
+        it = self.new_item(c["src"], c["s"], c["e"], self.playhead if at is None else at,
+                           c["lane"] if lane is None else lane)
+        for k in ("vol", "mute"):
+            if k in c:
+                it[k] = c[k]
+        it["pos"] = self.free_pos(it)
+        self.sel = it
+        self.mark_dirty()
+        self.after_edit()
+
+    def duplicate(self):
+        it = self.sel
+        if not it:
+            return self.tab.notify("Erst ein Stück anklicken.")
+        self.clipboard = dict(it)
+        self.paste(at=it["pos"] + self.length(it), lane=it["lane"])
+
+    def jump_edit(self, d):
+        """Auf-/Ab-Taste: zum vorigen/nächsten Schnittpunkt springen."""
+        pts = sorted({round(x, 4) for it in self.items for x in (it["pos"], it["pos"] + self.length(it))} | {0.0})
+        self.stop()
+        if d > 0:
+            nxt = [x for x in pts if x > self.playhead + 1e-3]
+            self.seek(nxt[0] if nxt else self.dur)
+        else:
+            prv = [x for x in pts if x < self.playhead - 1e-3]
+            self.seek(prv[-1] if prv else 0.0)
+        self.keep_playhead_visible()
 
     def reset(self):
         """Alle Schnitte verwerfen: jede Quelle wieder ungeschnitten (Videos hintereinander, Musik darunter)."""
@@ -973,7 +1065,34 @@ class CutterPage(Gtk.Box):
         self.refresh_list()
         self.timeline.queue_draw()
 
+    def _set_clip(self, key, val):
+        if self._vol_lock or not self.sel:
+            return
+        if self.sel.get(key, 1.0 if key == "vol" else False) == val:
+            return
+        if getattr(self, "_vol_it", None) is not self.sel or key == "mute":
+            self.save_undo()                              # ein Undo-Schritt je Regler-Zug
+            self._vol_it = self.sel
+        self.sel[key] = val
+        self.dirty = True
+        if key == "mute":
+            self._vol_it = None
+        self.cur_src = None
+        self.sync_players(self.playhead, force=True)
+        self.timeline.queue_draw()
+
+    def _sync_clip_ui(self):
+        it = self.sel
+        self._vol_lock = True
+        self._vol_it = None
+        has = bool(it) and self.sources[it["src"]]["has_audio"]
+        self.vol_row.set_sensitive(has)
+        self.mute_btn.set_active(bool(it and it.get("mute")))
+        self.vol_scale.set_value(100 * (it.get("vol", 1.0) if it else 1.0))
+        self._vol_lock = False
+
     def refresh_list(self):
+        self._sync_clip_ui()
         while (c := self.seg_list.get_first_child()):
             self.seg_list.remove(c)
         lanes = self.lane_count()
@@ -1011,10 +1130,53 @@ class CutterPage(Gtk.Box):
         self.timeline.set_content_height(max(self.tl_h - 14, self.content_h()))
         self.timeline.queue_draw()
 
-    def set_zoom(self, z):
+    def _view_w(self):
+        return max(200, self.tl_scroll.get_width() - 4)
+
+    def set_zoom(self, z, anchor=None):
+        """Zoomen; die Zeit unter anchor (x im sichtbaren Ausschnitt) bleibt an ihrer Stelle (Standard: Abspielkopf, sonst Mitte)."""
+        z = max(1.0, min(MAX_ZOOM, float(z)))
+        adj = self.tl_scroll.get_hadjustment()
+        vw = self._view_w()
+        old_w = max(vw, self.timeline.get_width())
+        if anchor is None:
+            px = 8 + (old_w - 16) * (self.playhead / self.span if self.span else 0) - adj.get_value()
+            anchor = px if 0 <= px <= vw else vw / 2
+        frac = (adj.get_value() + anchor - 8) / max(1, old_w - 16)      # Bruchteil der Zeitleiste unter dem Anker
         self.zoom = z
-        self.resize_timeline()
-        GLib.idle_add(lambda: (self.keep_playhead_visible(force=True), False)[-1])
+        self._zlock = True
+        self.zoom_scale.set_value(math.log2(z))
+        self._zlock = False
+        new_w = int(vw * z)
+        self.timeline.set_content_width(new_w)
+        self.timeline.set_content_height(max(self.tl_h - 14, self.content_h()))
+        adj.set_upper(max(new_w, vw))                    # sofort, sonst klemmt der Wert am alten Ende
+        adj.set_value(max(0.0, min(frac * (new_w - 16) + 8 - anchor, max(new_w, vw) - adj.get_page_size())))
+        self.timeline.queue_draw()
+
+    def zoom_fit(self):
+        self.set_zoom(1.0)
+        self.tl_scroll.get_hadjustment().set_value(0)
+
+    def zoom_sel(self):
+        """Markiertes Stück (sonst ganzen Schnitt) bildfüllend zeigen."""
+        it = self.sel
+        if not it:
+            return self.zoom_fit()
+        a, b = it["pos"], it["pos"] + self.length(it)
+        z = self.span / max(0.2, (b - a) * 1.15)
+        self.set_zoom(z, 0)
+        adj = self.tl_scroll.get_hadjustment()
+        adj.set_value(max(0, self.x_of(a) - self._view_w() * 0.075))
+
+    def on_pinch(self, g, scale):
+        ok, cx, cy = g.get_bounding_box_center()
+        adj = self.tl_scroll.get_hadjustment()
+        self.set_zoom(getattr(self, "_pz0", self.zoom) * scale, (cx - adj.get_value()) if ok else None)
+
+    def on_pan(self, g, dx, dy):
+        adj = self.tl_scroll.get_hadjustment()
+        adj.set_value(max(0, min(self._pan0 - dx, adj.get_upper() - adj.get_page_size())))
 
     def x_of(self, t):
         w = self.timeline.get_width()
@@ -1047,9 +1209,13 @@ class CutterPage(Gtk.Box):
         cr.set_source_rgba(1, 1, 1, 0.55)
         cr.set_font_size(10)
         px_per_s = (x1 - x0) / self.span
-        step = next(s for s in (0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600) if s * px_per_s > 70)
-        t = 0.0
-        while t <= self.span:
+        step = next((s for s in (0.04, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600) if s * px_per_s > 70), 3600)
+        try:
+            vis0, vis1 = cr.clip_extents()[0], cr.clip_extents()[2]
+        except Exception:
+            vis0, vis1 = 0, w
+        t = max(0.0, math.floor(max(0.0, vis0 - 80 - x0) / px_per_s / step) * step)
+        while t <= self.span and self.x_of(t) < vis1 + 80:
             x = self.x_of(t)
             cr.rectangle(x, RULER - 7, 1, 7)
             cr.fill()
@@ -1124,6 +1290,15 @@ class CutterPage(Gtk.Box):
             cr.set_source_rgba(*acc, 0.85)
             cr.mask_surface(src["wave"], 0, 0)
             cr.restore()
+        if it.get("mute") or abs(it.get("vol", 1.0) - 1.0) > 0.005:
+            cr.set_source_rgba(0, 0, 0, 0.35 if it.get("mute") else 0.0)
+            cr.rectangle(xa, y + th, wpx, wh)
+            cr.fill()
+            cr.set_font_size(10)
+            tag = "stumm" if it.get("mute") else f"{int(it['vol'] * 100)} %"
+            cr.set_source_rgba(1, 1, 1, 0.9)
+            cr.move_to(max(xa + 4, min(xb - 40, xa + 4)), y + lh - 4)
+            cr.show_text(tag)
         if wpx > 46 and lh > 30:                                 # Name
             cr.set_font_size(10)
             label = os.path.basename(src["path"])
@@ -1326,17 +1501,30 @@ class CutterPage(Gtk.Box):
 
     # ----- Tasten, Rad
     def on_scroll(self, ctrl, dx, dy):
-        if ctrl.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
-            self.zoom_scale.set_value(max(1, min(20, self.zoom * (0.85 if dy > 0 else 1.18))))
+        """Strg/Alt+Rad = zoomen am Zeiger, Rad = Zeitleiste seitwärts, Umschalt+Rad = Spuren hoch/runter."""
+        st = ctrl.get_current_event_state()
+        adj = self.tl_scroll.get_hadjustment()
+        if st & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            hx = self._hover_x if self._hover_x is not None else adj.get_value() + self._view_w() / 2
+            self.set_zoom(self.zoom * math.exp(-0.17 * (dy or dx)), hx - adj.get_value())
             return True
-        return False
+        if st & Gdk.ModifierType.SHIFT_MASK:
+            v = self.tl_scroll.get_vadjustment()
+            v.set_value(v.get_value() + (dy or dx) * 30)
+            return True
+        if dx == 0 and self.zoom <= 1.0001:
+            return False                                   # nichts zu scrollen: Seite darf scrollen
+        d = (dx + dy) if abs(dx) < 1e-9 or abs(dy) < 1e-9 else dx
+        adj.set_value(max(0, min(adj.get_value() + d * adj.get_page_size() * 0.12,
+                                 adj.get_upper() - adj.get_page_size())))
+        return True
 
     def on_key(self, ctrl, keyval, code, mods):
         k = Gdk.keyval_name(keyval) or ""
         shift = bool(mods & Gdk.ModifierType.SHIFT_MASK)
         c = bool(mods & Gdk.ModifierType.CONTROL_MASK)
         focus = self.get_root().get_focus()
-        if isinstance(focus, (Gtk.Text, Gtk.TextView, Gtk.Editable, Gtk.DropDown, Gtk.SpinButton)):
+        if isinstance(focus, (Gtk.Text, Gtk.TextView, Gtk.Editable, Gtk.DropDown, Gtk.SpinButton, Gtk.Scale)):
             return False
         if k == "space":
             self.toggle_play()
@@ -1348,16 +1536,38 @@ class CutterPage(Gtk.Box):
             self.seek(0)
         elif k == "End":
             self.seek(self.dur)
-        elif c and k.lower() == "z":
+        elif c and k.lower() == "z" and not shift:
             self.undo()
+        elif (c and k.lower() == "y") or (c and shift and k.lower() == "z"):
+            self.redo()
+        elif c and k.lower() == "c":
+            self.copy_sel()
+        elif c and k.lower() == "v":
+            self.paste()
+        elif c and k.lower() == "d":
+            self.duplicate()
+        elif k in ("Up", "Down"):
+            self.jump_edit(-1 if k == "Up" else 1)
+        elif k in ("plus", "equal", "KP_Add"):
+            self.set_zoom(self.zoom * 1.4)
+        elif k in ("minus", "KP_Subtract"):
+            self.set_zoom(self.zoom / 1.4)
+        elif shift and not c and k.lower() == "z":
+            self.zoom_fit()
+        elif not c and k.lower() == "f":
+            self.zoom_sel()
         elif not c and k.lower() == "s":
             self.split(announce=True)
-        elif not c and k.lower() == "v":
+        elif not c and not shift and k.lower() == "v":
             self.tool_btns["drag"].set_active(True)
         elif not c and k.lower() == "c":
             self.tool_btns["cut"].set_active(True)
         elif k in ("Delete", "BackSpace"):
             self.delete_sel()
+        elif not c and k.lower() == "m":
+            if self.sel:
+                self._set_clip("mute", not self.sel.get("mute", False))
+                self._sync_clip_ui()
         elif not c and k.lower() == "i":
             self.trim_start()
         elif not c and k.lower() == "o":
@@ -1457,11 +1667,12 @@ class CutterPage(Gtk.Box):
         if audio or fmt_i == 3:
             for k, it in enumerate(items):
                 c = self.sources[it["src"]]
-                if not c["has_audio"]:
+                if not c["has_audio"] or it.get("mute"):
                     continue
                 ms = int(it["pos"] * 1000)
+                vol = f",volume={it['vol']:.3f}" if abs(it.get("vol", 1.0) - 1.0) > 0.005 else ""
                 parts.append(f"[{it['src']}:a]atrim=start={it['s']:.3f}:end={it['e']:.3f},asetpts=PTS-STARTPTS,"
-                             f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay={ms}|{ms}[a{k}]")
+                             f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{vol},adelay={ms}|{ms}[a{k}]")
                 labels.append(f"[a{k}]")
             if labels:
                 m = len(labels)
