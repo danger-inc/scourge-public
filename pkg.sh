@@ -41,7 +41,21 @@ pkg_install() {
             for p in $want; do
                 if pacman -Si "$p" >/dev/null 2>&1 || pacman -Sg "$p" >/dev/null 2>&1; then avail+=("$p"); else skipped+=("$p"); fi
             done
-            [ ${#avail[@]} -gt 0 ] && as_root pacman -S --needed --noconfirm "${avail[@]}" ;;
+            if [ ${#avail[@]} -gt 0 ]; then
+                # Arch kennt keine Teil-Updates: ein „pacman -S“ gegen eine Paketdatenbank, die neuer ist als das
+                # installierte System (oder ein „-Sy“ ohne „-u“), zieht neue Bibliotheken neben alte (z. B. gtk4 ohne
+                # passendes glib2 → „undefined symbol“ in ALLEN GTK-Programmen). Darum: System erst ganz aktualisieren.
+                if [ -n "$(pacman -Qu 2>/dev/null)" ] || ! pacman -T "${avail[@]}" >/dev/null 2>&1; then
+                    if ask "Arch erlaubt keine Teil-Updates. Jetzt das ganze System aktualisieren (pacman -Syu) und die Pakete dazu installieren?"; then
+                        as_root pacman -Syu --needed --noconfirm "${avail[@]}"
+                    elif [ -z "$(pacman -Qu 2>/dev/null)" ]; then
+                        as_root pacman -S --needed --noconfirm "${avail[@]}"
+                    else
+                        warn "System ist nicht aktuell – Pakete NICHT installiert (sonst Teil-Update). Erst „sudo pacman -Syu“, dann Installer erneut starten. Fehlend: ${avail[*]}"
+                        return 1
+                    fi
+                fi
+            fi ;;
         apt-get)
             as_root apt-get update -qq || true
             for p in $want; do
