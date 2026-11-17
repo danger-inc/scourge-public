@@ -41,7 +41,7 @@ def log(msg):
 
 def main():
     a = args()
-    lock = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", tempfile.gettempdir()), "ist-swipe.lock"), "w")
+    lock = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", tempfile.gettempdir()), "ist-swipe.lock"), "w", encoding="utf-8")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

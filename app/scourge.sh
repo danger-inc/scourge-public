@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+PY0=python3; [ -x /usr/bin/python3 ] && PY0=/usr/bin/python3     # pyenv/conda/asdf: dort hat „python3“ kein PyGObject – System-Python nehmen
 [ "${1:-}" = --quit ] || { [ -x "$HOME/.local/bin/linguist" ] && "$HOME/.local/bin/linguist" --daemon >/dev/null 2>&1 & }   # linguist (Übersetzer) läuft immer mit
 # Starter für Scourge. Läuft Scourge schon (auch unsichtbar im Hintergrund), geht der Aufruf direkt per D-Bus
 # hin – ohne Python-/GTK-Start, das Fenster ist sofort da. Sonst wird Scourge gestartet.
@@ -17,10 +18,10 @@ case "${1:-}" in
             gdbus call --session --timeout 3 --dest "$APP" --object-path "$OBJ" --method org.gtk.Actions.Activate \
                 osint "[<('file', '$f')>]" '{}' >/dev/null 2>&1 && exit 0
         fi
-        exec python3 "$MAIN" --osint-file "$f" ;;
+        exec "$PY0" "$MAIN" --osint-file "$f" ;;
     --daemon)
         running && exit 0
-        setsid -f python3 "$MAIN" --daemon >"${XDG_RUNTIME_DIR:-/tmp}/scourge.log" 2>&1 </dev/null
+        setsid -f "$PY0" "$MAIN" --daemon >"${XDG_RUNTIME_DIR:-/tmp}/scourge.log" 2>&1 </dev/null
         exit 0 ;;
     --quit)
         running && gdbus call --session --dest "$APP" --object-path "$OBJ" \
@@ -39,7 +40,7 @@ case "${1:-}" in -*) ;; *)
     fi ;;
 esac
 
-running || exec python3 "$MAIN" "$@"
+running || exec "$PY0" "$MAIN" "$@"
 
 # Absicherung: Die Hintergrund-Instanz kann „blind“ werden (Grafik-Kontext kaputt) – sie nimmt den Aufruf an,
 # zeigt aber kein Fenster. Erscheint es nicht binnen ~2 s, wird sie beendet und Scourge frisch gestartet.
@@ -61,7 +62,7 @@ restart() {
         for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
         kill -9 "$pid" 2>/dev/null
     fi
-    exec python3 "$MAIN" "$@"
+    exec "$PY0" "$MAIN" "$@"
 }
 
 if [ $# -eq 0 ]; then
@@ -83,7 +84,7 @@ uris=()
 for a in "$@"; do
     case "$a" in
         file://*) uris+=("'$a'") ;;
-        -*) exec python3 "$MAIN" "$@" ;;          # unbekannte Option: normal starten
+        -*) exec "$PY0" "$MAIN" "$@" ;;          # unbekannte Option: normal starten
         *) uris+=("'file://$(urlencode "$(realpath -m -- "$a")")'") ;;
     esac
 done

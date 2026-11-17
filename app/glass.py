@@ -97,6 +97,54 @@ def frame_window(win):
         win.add_css_class("framed")
 
 
+def win32_style(win):
+    """Windows: die echte Titelleiste in den Farben des Designs (Hintergrund, Schrift, dunkel/hell) und mit runden
+    Ecken (Windows 11). Die Leiste bleibt die echte – Verschieben, Ziehen an den oberen Rand (Vollbild),
+    Rand-Andocken, Win+Pfeile und Minimieren/Maximieren funktionieren so von Haus aus. Fehler: still ignorieren."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import istheme
+        css, light = istheme.resolve()
+        col = istheme.parse(css)
+        user32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+        pid = os.getpid()
+        title = win.get_title() or ""
+        found = []
+        EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def each(hwnd, _):
+            p = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+            if p.value == pid and user32.IsWindowVisible(hwnd):
+                buf = ctypes.create_unicode_buffer(256)
+                user32.GetWindowTextW(hwnd, buf, 256)
+                if buf.value == title:
+                    found.append(hwnd)
+            return True
+        user32.EnumWindows(EnumProc(each), 0)
+
+        def bgr(hexcol):                     # #rrggbb → COLORREF 0x00BBGGRR
+            r, g, b = (int(hexcol[i:i + 2], 16) for i in (1, 3, 5))
+            return (b << 16) | (g << 8) | r
+
+        def attr(hwnd, what, value):
+            v = ctypes.c_int(value)
+            dwm.DwmSetWindowAttribute(wintypes.HWND(hwnd), what, ctypes.byref(v), 4)
+        bg = col.get("background") or ("#f5f5f5" if light else "#1b1b1b")
+        fg = col.get("foreground") or ("#1b1b1b" if light else "#e6e6e6")
+        for hwnd in found:
+            attr(hwnd, 20, 0 if light else 1)          # DWMWA_USE_IMMERSIVE_DARK_MODE (Windows 10 20H1+)
+            attr(hwnd, 33, 2)                          # DWMWA_WINDOW_CORNER_PREFERENCE = rund (Windows 11)
+            attr(hwnd, 34, bgr(bg))                    # DWMWA_BORDER_COLOR
+            attr(hwnd, 35, bgr(bg))                    # DWMWA_CAPTION_COLOR
+            attr(hwnd, 36, bgr(fg))                    # DWMWA_TEXT_COLOR
+    except Exception:  # noqa: BLE001 – ältere Windows-Versionen kennen die Attribute nicht
+        pass
+
+
 def make_movable(win, notebook):
     """GNOME/KDE: die Titelleiste ist unsichtbar, also lässt sich das Fenster am freien Platz der Tab-Leiste
     (nicht auf Tabs, Knöpfen oder Seiteninhalt) ziehen. Kachel-WM/Windows brauchen das nicht."""
@@ -166,7 +214,7 @@ def bring_here(win):
 
 def load():
     try:
-        with open(SETTINGS) as f:
+        with open(SETTINGS, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
@@ -181,7 +229,7 @@ def set_on(on):
     data["glass"] = bool(on)
     os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
     tmp = SETTINGS + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     os.replace(tmp, SETTINGS)
 
@@ -769,7 +817,7 @@ class EndFx(Gtk.Widget):
 
         def log(*a):
             if dbg:
-                with open("/tmp/endfx.log", "a") as f:
+                with open("/tmp/endfx.log", "a", encoding="utf-8") as f:
                     f.write(" ".join(str(x) for x in a) + "\n")
         ev = ctrl.get_current_event()
         if ev is not None:                              # Lage direkt aus dem Ereignis (ohne vorherige Mausbewegung)

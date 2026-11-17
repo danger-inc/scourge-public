@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+PY0=python3; [ -x /usr/bin/python3 ] && PY0=/usr/bin/python3     # pyenv/conda/asdf: dort hat „python3“ kein PyGObject – System-Python nehmen
 # Starter für scourge-pdf (schlanker PDF-Editor). Läuft Scourge schon (auch unsichtbar im Hintergrund), geht der Aufruf direkt per D-Bus
 # hin – ohne Python-/GTK-Start, das Fenster ist sofort da. Sonst wird Scourge gestartet.
 #   scourge-pdf [datei.pdf …]   scourge-pdf --daemon   scourge-pdf --quit
@@ -12,7 +13,7 @@ running() { gdbus call --session --dest org.freedesktop.DBus --object-path /org/
 case "${1:-}" in
     --daemon)
         running && exit 0
-        setsid -f python3 "$MAIN" --daemon >"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
+        setsid -f "$PY0" "$MAIN" --daemon >"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
         exit 0 ;;
     --quit)
         running && gdbus call --session --dest "$APP" --object-path "$OBJ" \
@@ -20,7 +21,7 @@ case "${1:-}" in
         exit 0 ;;
 esac
 
-running || exec python3 "$MAIN" "$@"
+running || exec "$PY0" "$MAIN" "$@"
 
 # Absicherung: Die Hintergrund-Instanz kann „blind“ werden (Grafik-Kontext kaputt) – sie nimmt den Aufruf an,
 # zeigt aber kein Fenster. Erscheint es nicht binnen ~2 s, wird sie beendet und Scourge frisch gestartet.
@@ -42,7 +43,7 @@ restart() {
         for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
         kill -9 "$pid" 2>/dev/null
     fi
-    exec python3 "$MAIN" "$@"
+    exec "$PY0" "$MAIN" "$@"
 }
 
 if [ $# -eq 0 ]; then
@@ -64,7 +65,7 @@ uris=()
 for a in "$@"; do
     case "$a" in
         file://*) uris+=("'$a'") ;;
-        -*) exec python3 "$MAIN" "$@" ;;          # unbekannte Option: normal starten
+        -*) exec "$PY0" "$MAIN" "$@" ;;          # unbekannte Option: normal starten
         *) uris+=("'file://$(urlencode "$(realpath -m -- "$a")")'") ;;
     esac
 done
@@ -78,7 +79,7 @@ target() {
     local ws cls wins
     ws=$(hyprctl activeworkspace -j 2>/dev/null | grep -o '"id": *-\?[0-9]\+' | head -1 | grep -o '\-\?[0-9]\+$')
     [ -z "$ws" ] && { echo "$APP"; return; }
-    wins=$(hyprctl clients -j 2>/dev/null | python3 -c '
+    wins=$(hyprctl clients -j 2>/dev/null | "$PY0" -c '
 import json, sys
 ws, app = int(sys.argv[1]), sys.argv[2]
 try:
@@ -97,14 +98,14 @@ print("here:" + here[0]["class"] if here else ("any" if mine else "none"))
 }
 dest=$(target)
 if [ "$dest" = NEW ]; then
-    setsid -f python3 "$MAIN" --new-window "$@" >>"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
+    setsid -f "$PY0" "$MAIN" --new-window "$@" >>"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
     exit 0
 fi
 OBJ="/${dest//./\/}"
 gdbus call --session --timeout 3 --dest "$dest" --object-path "$OBJ" \
     --method org.freedesktop.Application.Open "$(join "${uris[@]}")" "{}" >/dev/null 2>&1 && { [ "$dest" != "$APP" ] || shown || restart "$@"; exit 0; }
 if [ "$dest" != "$APP" ]; then      # Instanz antwortet nicht: eigene neue Instanz, die Hauptinstanz bleibt unberührt
-    setsid -f python3 "$MAIN" --new-window "$@" >>"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
+    setsid -f "$PY0" "$MAIN" --new-window "$@" >>"${XDG_RUNTIME_DIR:-/tmp}/scourge-pdf.log" 2>&1 </dev/null
     exit 0
 fi
 restart "$@"

@@ -100,7 +100,7 @@ DIST = 150            # so weit (px) wischen, bis es auslöst
 GHOST = 0.34          # Anteil der Breite, den die vorige Seite beim vollen Wischen zeigt
 SHIFT = 30            # so weit rückt die aktuelle Seite beiseite
 KEEP = 16             # so viele Seitenbilder merken
-DUR_COMMIT = 300_000  # µs
+DUR_COMMIT = 360_000  # µs
 DUR_CANCEL = 180_000
 
 
@@ -244,8 +244,11 @@ class SwipeBack:
         sc.connect("scroll", lambda c, dx, dy: bool(me() and me()._scroll(c, dx, dy)))
         sc.connect("scroll-end", lambda c: me() and me()._end(c))
         self.bin.add_controller(sc)
-        for btn, d in (((8, -1), (9, 1)) if mouse else ()):                  # Seitentasten „zurück“/„vor“ der Maus
+        # Seitentasten „zurück“/„vor“ der Maus: X11/Wayland melden 8/9, Windows (XBUTTON1/2) je nach GTK 4/5 oder 8/9
+        for btn, d in (((8, -1), (9, 1), (4, -1), (5, 1)) if mouse and os.name == "nt"
+                       else ((8, -1), (9, 1)) if mouse else ()):
             mouse = Gtk.GestureClick(button=btn)
+            mouse.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)       # auch über Listen/Knöpfen
             mouse.connect("pressed", lambda *_, d=d: me() and me().trigger(d=d))
             self.bin.add_controller(mouse)
 
@@ -561,7 +564,10 @@ class SwipeBack:
             shift = SHIFT * p0 + (SHIFT * 2 - SHIFT * p0) * e
             front_alpha = (1 - 0.3 * p0) * (1 - 0.75 * e)
             ready = True
-            frame_alpha = 1 - e
+            # Rahmen + Ziel-Chip (in Akzentfarbe) bleiben beim Aufklappen voll sichtbar und blenden erst im letzten Drittel aus
+            # (vorher: 1 - e mit Ease-out → nach ~100 ms fast unsichtbar, der gefüllte Chip war kaum zu sehen)
+            ft = max(0.0, (st["t"] - 0.62) / 0.38)
+            frame_alpha = 1 - ft * ft * (3 - 2 * ft)
         else:
             p = st["p"]
             gw = GHOST * p * W

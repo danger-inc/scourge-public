@@ -4,6 +4,10 @@
 #   pkg_install "<arch>" "<debian/ubuntu/mint>" "<fedora>" "<opensuse>"
 # Kanonische Quelle: rice-apps-packaging/pkg.sh – Kopien liegen in jedem Repo.
 
+# pyenv/conda/asdf: dort hat „python3“ kein PyGObject (gi) → die Installer nehmen immer das System-Python.
+SYSPY=$(command -v /usr/bin/python3 2>/dev/null || command -v python3)
+python3() { "$SYSPY" "$@"; }
+
 say()  { printf '\033[1;38;5;216m%s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 

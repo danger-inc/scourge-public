@@ -1,5 +1,26 @@
 # scourge – Änderungen
 
+## 2.30.0 (2026-11-17)
+- **„PDF bearbeiten“ steckt jetzt in scourge-pdf** (die Kachel in Scourge ist weg): Oben links wechselst du wie in Affinity zwischen **bearbeiten** (lesen, markieren, Text, Unterschrift) und **seiten** (hinzufügen, löschen, drehen, umsortieren). Der Schalter arbeitet an genau der Datei, die im Tab offen ist – Anmerkungen werden beim Wechsel gesichert, gespeicherte Seitenänderungen siehst du sofort im Editor („weiter bearbeiten“).
+- **Zoom wie bei Apple**: Strg+Mausrad, Pinch und Strg +/− zoomen weich auf die Zeigerposition (bzw. die Mitte der zwei Finger) – nichts springt mehr, der Punkt unter dem Finger bleibt stehen, auch seitlich.
+- **Kommentare öffnen**: Klick auf eine Notiz oder Markierung mit Kommentar zeigt den ganzen Verlauf; Texte lassen sich ganz oder teilweise markieren und kopieren, dazu „alles kopieren“.
+- **Strg+Tab** springt zur zuletzt geöffneten PDF (nochmal drücken = zurück), auch nach einem Neustart.
+- **Strg+F** öffnet eine Suchleiste oben rechts im PDF (wie in notist), sucht beim Tippen; **Enter** springt zum nächsten Treffer, Umschalt+Enter zum vorherigen, Esc schließt.
+- **Formen**: Rechtsklick auf das Formen-Symbol wählt die Art (Rahmen, Ellipse, Linie, Pfeil).
+
+## 2.29.0 (2026-11-13)
+- **Neue Kachel „PDF bearbeiten“**: Seitenübersicht mit Miniaturen. Seiten **hinzufügen** – andere PDFs anhängen, Bilder als neue Seiten (auf A4 oder in Bildgröße) oder leere Seiten – wahlweise am Ende, am Anfang oder nach der ausgewählten Seite. Dazu löschen, drehen (Doppelklick oder R), duplizieren, per Ziehen umsortieren, Auswahl als neue PDF extrahieren, Rückgängig/Wiederholen. Neu eingefügte Seiten haben einen grünen Rahmen.
+- **„in scourge-pdf weiter bearbeiten“**: speichert (das Original wird vorher gesichert) und öffnet die PDF sofort im PDF-Editor für Text, Markierungen und Unterschrift. Auch „speichern unter …“ und eine neue PDF nur aus Bildern.
+
+## 2.28.0 (2026-11-11)
+- **PDF: Kommentare lesen und beantworten**: Neuer Reiter „Kommentare“ in der Seitenleiste (F9) listet alle Notizen, Markierungen und Kommentare mit Seite, Art, Autor, Datum, markiertem Text und Kommentartext (auch aus Acrobat & Co.); Texte lassen sich markieren und kopieren, ein Klick auf die Kopfzeile springt zur Stelle. „↩ Antworten“ hängt eine Antwort an den Kommentar (mit deinem Namen, einstellbar unter Eigenschaften); Antworten lassen sich löschen.
+- **Hover-Popups**: Zeiger über einer Notiz oder Markierung mit Kommentar zeigt den ganzen Verlauf samt Antworten.
+- **Drucken** (Strg+P, Menü ⋮): Systemdruckdialog, Seiten mit Anmerkungen.
+- **Eigenschaften**: Titel, Autor, Thema, Stichwörter bearbeiten, dazu Dateiinfos.
+- **Lesezeichen**: Im Reiter „Gliederung“ setzen, umbenennen und löschen – werden ins PDF geschrieben (Strg+Z macht es rückgängig).
+- **Seiten zuschneiden**, **Seitenzahlen / Kopf- und Fußzeile** (mit {seite} {seiten} {datum} {datei}) und **Wasserzeichen** im Menü ⋮, alle rückgängig machbar.
+- **Formen und Stempel**: Das Werkzeug „formen“ zeichnet Rahmen, Ellipse, Linie und Pfeil (Art rechts wählen); neues Werkzeug „stempel“ (M) setzt ENTWURF, GEPRÜFT, GENEHMIGT … oder das Datum per Klick, mit Vorschau.
+
 ## 2.27.0 (2026-11-06)
 - **Zeitleiste wie in DaVinci Resolve**: Mausrad/Trackpad scrollt die Zeitleiste seitwärts, Strg- oder Alt-Rad und Pinch zoomen genau an der Zeigerposition (bis auf Einzelbild-Ebene, 128×), mittlere Maustaste zieht die Ansicht, Umschalt-Rad scrollt die Spuren. Sichtbarer Scrollbalken, Zoomregler stufenlos, Knopf „Einpassen“; Tasten +/−, Umschalt+Z (alles zeigen), F (Auswahl füllt die Zeitleiste).
 - **Fehlende Schnittfunktionen**: Wiederholen (Strg+Y), Kopieren/Einfügen/Duplizieren (Strg+C/V/D), Auf/Ab springt zum vorigen/nächsten Schnittpunkt, Lautstärke (0–200 %) und Stumm (M) je Stück – in Vorschau, Export und Zwischenstand.

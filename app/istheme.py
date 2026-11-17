@@ -192,9 +192,9 @@ def eco_auto():
             _run("hyprctl", "eval", "hl.config({animations={enabled=false},decoration={blur={enabled=false}}})")
     try:
         bat = "/sys/class/power_supply/BAT0/"
-        with open(bat + "capacity") as f:
+        with open(bat + "capacity", encoding="utf-8") as f:
             pct = int(f.read())
-        with open(bat + "status") as f:
+        with open(bat + "status", encoding="utf-8") as f:
             status = f.read().strip()
     except (OSError, ValueError):
         return
@@ -313,7 +313,8 @@ def resolve(state=None):
         return css(key), is_light(key)
     want_light = st["mode"] == "light"
     try:
-        base = open(MATUGEN_CSS, encoding="utf-8").read()
+        with open(MATUGEN_CSS, encoding="utf-8") as _f:
+            base = _f.read()
         bg = parse(base).get("background")
     except OSError:
         base, bg = "", None

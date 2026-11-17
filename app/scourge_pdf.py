@@ -2,7 +2,7 @@
 # scourge-pdf: der schlanke PDF-Editor von Scourge. Eigener Prozess und eigenes Fenster, lädt nur viewer.py und die
 # Chrome-Basis (kein OSINT, keine Werkzeuge, keine Bilder-Bibliotheken) und startet dadurch sofort.
 # Farben kommen live aus ~/.cache/matugen/colors.css. Start: scourge-pdf [datei.pdf …] | --daemon | --quit
-import ast, os, sys
+import ast, json, os, sys
 
 if os.name == "nt":   # Windows/MSYS2: Programme liegen neben python.exe
     os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
@@ -18,6 +18,7 @@ sys.path.insert(1, os.path.expanduser("~/.local/share/rice-apps"))
 
 APP_ID = "de.invincible.ScourgePdf"
 MATUGEN_CSS = os.path.expanduser("~/.cache/matugen/colors.css")
+RECENT_FILE = os.path.expanduser("~/.config/scourge/pdf-recent.json")   # zuletzt geöffnete PDFs (Strg+Tab)
 
 
 def load_icon_font():
@@ -63,7 +64,8 @@ def _const_text(node):
 def scourge_css():
     """Stile aus scourge.py und editor.py holen, ohne sie zu importieren (das lädt PIL, OSINT usw.): die Texte
     stehen dort als einfache Zuweisungen und lassen sich per ast auslesen."""
-    want = {"scourge.py": {"FALLBACK_COLORS", "APP_CSS", "CHROME_CSS", "SUITE_CSS"}, "editor.py": {"EDITOR_CSS"}}
+    want = {"scourge.py": {"FALLBACK_COLORS", "APP_CSS", "CHROME_CSS", "SUITE_CSS"}, "editor.py": {"EDITOR_CSS"},
+            "pdfpages.py": {"PAGES_CSS"}}
     out = {}
     for fname, names in want.items():
         try:
@@ -91,6 +93,8 @@ class PdfTab(Gtk.Box):
         self.app = app
         self.path = None
         self.title = "start"
+        self.mode = "edit"             # "edit" = lesen/markieren/schreiben, "pages" = Seiten ordnen (dieselbe Datei)
+        self.pages = None              # PdfPagesPage, erst beim ersten Wechsel gebaut
         self.view = PdfView(editable=True, notify=app.notify)
         self.empty = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, valign=Gtk.Align.CENTER,
                              halign=Gtk.Align.CENTER, vexpand=True, hexpand=True)
@@ -106,6 +110,76 @@ class PdfTab(Gtk.Box):
         drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         drop.connect("drop", self.on_drop)
         self.add_controller(drop)
+
+    @property
+    def win(self):                     # die Seitenübersicht (pdfpages) erwartet ein Tab mit Fenster und Meldungen
+        return self.app.win
+
+    def notify(self, msg):
+        self.app.notify(msg)
+
+    # ---------- Modus: bearbeiten / seiten ----------
+    def show_mode(self):
+        self.stack.set_visible_child_name("pages" if self.mode == "pages" else ("pdf" if self.path else "empty"))
+        if self is self.app.current():
+            self.app.sync_mode(self)
+
+    def _pages_sync(self):
+        """Seitenübersicht auf die Datei dieses Tabs bringen (neu laden, wenn sie sich geändert hat)."""
+        pg = self.pages
+        if not self.path:
+            return
+        try:
+            stale = pg.main != self.path or pg.loaded_mtime != os.path.getmtime(self.path)
+        except OSError:
+            stale = True
+        if stale:
+            pg.open_main(self.path)
+
+    def set_mode(self, mode):
+        """Wechseln, ohne die Datei zu verlassen: Anmerkungen werden vorher gesichert, Seitenänderungen beim Zurückwechseln
+        gespeichert oder verworfen. False = Wechsel abgelehnt (Anzeige zurücksetzen)."""
+        if mode == self.mode:
+            return True
+        if mode == "pages":
+            v = self.view
+            if self.path and v.dirty and v.editable:
+                v._backup_original(v.path)
+                v.save(quiet=True)
+                if v.dirty:
+                    self.notify("Anmerkungen ließen sich nicht speichern.")
+                    return False
+            if self.pages is None:
+                from pdfpages import PdfPagesPage
+                self.pages = PdfPagesPage(self)
+                self.pages.set_vexpand(True)
+                self.stack.add_named(self.pages, "pages")
+            self.mode = "pages"
+            self._pages_sync()
+            self.show_mode()
+            return True
+
+        def leave():
+            w, self.pages.written = self.pages.written, None
+            self.mode = "edit"
+            if w:                                          # Seiten wurden gespeichert → Editor zeigt das neue PDF
+                self.load(w)
+            self.show_mode()
+            if self.path:
+                self.view.grab_focus()
+        if self.pages.dirty:
+            self.app.ask_pages([self], leave)
+            return False
+        leave()
+        return True
+
+    def edit_here(self, path):
+        """Aus der Seitenübersicht („weiter bearbeiten“): gespeicherte Datei im Editor dieses Tabs öffnen."""
+        self.pages.written = None
+        self.mode = "edit"
+        self.load(path)
+        self.show_mode()
+        self.view.grab_focus()
 
     def on_drop(self, _t, files, *_):
         paths = [f.get_path() for f in files.get_files() if f.get_path()]
@@ -129,10 +203,17 @@ class PdfTab(Gtk.Box):
         self.path = path
         self.view.load(doc, path)
         self.view.password = password
-        self.stack.set_visible_child_name("pdf")
         self.title = os.path.basename(path)
         self.app.update_label(self)
-        self.view.grab_focus()
+        self.app.touch(path)
+        if self.mode == "pages":
+            if self.pages.dirty:
+                self.pages.confirm_discard(lambda: self.pages.open_main(path))
+            else:
+                self.pages.open_main(path)
+        self.show_mode()
+        if self.mode == "edit":
+            self.view.grab_focus()
         return True
 
     def ask_password(self, path):
@@ -160,6 +241,8 @@ class PdfTab(Gtk.Box):
             self.view.cancel_edit()
         except Exception:
             pass
+        if self.pages is not None:
+            self.pages.shutdown()
 
 
 class PdfApp(Gtk.Application):
@@ -173,6 +256,13 @@ class PdfApp(Gtk.Application):
         self._held = False
         self._quitting = False
         self._toast_id = None
+        self.mode_pref = "edit"        # Modus, den neue Tabs übernehmen
+        self._mode_sync = False
+        try:
+            with open(RECENT_FILE) as f:
+                self.recent = [p for p in json.load(f) if isinstance(p, str)]
+        except (OSError, ValueError):
+            self.recent = []
 
     # ---------- Start / Aufrufe ----------
     def do_startup(self):
@@ -225,7 +315,7 @@ class PdfApp(Gtk.Application):
             from home import HOME_CSS         # Tabs und Kopfleiste
         except Exception:
             HOME_CSS = ""
-        css += (parts.get("APP_CSS", "") + parts.get("EDITOR_CSS", "") + VIEWER_CSS + HOME_CSS + glass.GLASS_CSS + ch.CSS + parts.get("CHROME_CSS", "")
+        css += (parts.get("APP_CSS", "") + parts.get("EDITOR_CSS", "") + parts.get("PAGES_CSS", "") + VIEWER_CSS + HOME_CSS + glass.GLASS_CSS + ch.CSS + parts.get("CHROME_CSS", "")
                 + parts.get("SUITE_CSS", "") + SWIPE_CSS + PDF_CSS)
         self.css.load_from_string(css)
 
@@ -277,7 +367,23 @@ class PdfApp(Gtk.Application):
                            tooltip_text="Scourge (volle App) öffnen")
         brand.add_css_class("brand")
         brand.connect("clicked", lambda *_: self.open_scourge())
-        self.notebook.set_action_widget(brand, Gtk.PackType.START)
+        left = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        left.append(brand)
+        sw = Gtk.Box(spacing=2, valign=Gtk.Align.CENTER, margin_end=4)       # wie der Personas-Schalter in Affinity
+        sw.add_css_class("pgroup")
+        self.mode_btns, first = {}, None
+        for key, label, tip in (("edit", "󰏫 bearbeiten", "PDF lesen, markieren, Text einfügen, unterschreiben"),
+                                ("pages", "󰕮 seiten", "Seiten dieser Datei hinzufügen, löschen, drehen, umsortieren")):
+            b = Gtk.ToggleButton(label=label, tooltip_text=tip, focus_on_click=False, active=key == "edit")
+            b.add_css_class("pb"); b.add_css_class("small")
+            if first:
+                b.set_group(first)
+            first = first or b
+            b.connect("toggled", lambda btn, key=key: self.on_mode(key, btn))
+            self.mode_btns[key] = b
+            sw.append(b)
+        left.append(sw)
+        self.notebook.set_action_widget(left, Gtk.PackType.START)
         right = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER, margin_start=10)
         right.append(ch.button("󰐕 öffnen", "PDF in neuem Tab öffnen (Strg+O)", action="win.open"))
         right.append(ch.button("󰊓", "Vollbild – nur das PDF ansehen (F11, Esc beendet)", action="win.fullscreen"))
@@ -306,8 +412,7 @@ class PdfApp(Gtk.Application):
         close.add_css_class("tclose")
         right.append(close)
         self.notebook.set_action_widget(right, Gtk.PackType.END)
-        self.notebook.connect("switch-page", lambda nb, page, i: self.win.set_title(
-            f"{page.title} – scourge-pdf" if page.path else "scourge-pdf"))
+        self.notebook.connect("switch-page", self.on_switch_page)
         for sig in ("page-added", "page-removed", "page-reordered"):
             self.notebook.connect(sig, lambda *_: GLib.idle_add(lambda: (self.number_tabs(), False)[-1]))
 
@@ -315,14 +420,15 @@ class PdfApp(Gtk.Application):
         status.add_css_class("tstatus")
         self.toast = ch.label("", "msg", hexpand=True, ellipsize=True)
         status.append(self.toast)
-        for k, v in (("strg+o", "öffnen"), ("strg+w", "tab zu"), ("alt+1-9", "tab wählen")):
+        for k, v in (("strg+o", "öffnen"), ("strg+w", "tab zu"), ("strg+tab", "letzte pdf"), ("strg+f", "suchen"),
+                 ("alt+1-9", "tab wählen")):
             status.append(ch.hint(k, v))
         sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.EXTERNAL, vscrollbar_policy=Gtk.PolicyType.NEVER,
                                 propagate_natural_height=True)
         sc.set_child(status)
         self.status_bar = Gtk.WindowHandle(child=sc)
         root.append(self.status_bar)                 # GNOME/KDE: hier lässt sich das Fenster ziehen
-        esc = Gtk.EventControllerKey()               # Esc beendet das Vollbild (vor dem PDF, solange nichts getippt wird)
+        esc = Gtk.EventControllerKey()               # Esc beendet das Vollbild, Strg+Tab/Strg+F gelten überall im Fenster
         esc.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         esc.connect("key-pressed", self._fs_key)
         self.win.add_controller(esc)
@@ -332,7 +438,16 @@ class PdfApp(Gtk.Application):
     # ---------- Vollbild: nur das PDF ----------
     fs = False
 
-    def _fs_key(self, _c, keyval, _code, _mods):
+    def _fs_key(self, _c, keyval, _code, mods):
+        M = Gdk.ModifierType
+        if mods & M.CONTROL_MASK and not mods & M.ALT_MASK:
+            if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):      # wie in notist: zur zuletzt geöffneten Datei
+                self.jump_last()
+                return True
+            tab = self.current()
+            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and not mods & M.SHIFT_MASK and tab and tab.mode == "edit" and tab.path:
+                tab.view.toggle_find()
+                return True
         if self.fs and keyval == Gdk.KEY_Escape:
             tab = self.current()
             if tab is not None and getattr(tab.view, "edit", None):
@@ -343,8 +458,8 @@ class PdfApp(Gtk.Application):
 
     def set_fullscreen(self, on):
         tab = self.current()
-        if on and (tab is None or not tab.path):
-            return self.notify("Erst ein PDF öffnen.")
+        if on and (tab is None or not tab.path or tab.mode != "edit"):
+            return self.notify("Erst ein PDF öffnen (Modus „bearbeiten“).")
         if bool(on) == self.fs:
             return
         self.fs = bool(on)
@@ -406,7 +521,82 @@ class PdfApp(Gtk.Application):
         self.notebook.set_tab_reorderable(tab, True)
         self.notebook.get_page(tab).set_property("tab-expand", True)
         self.notebook.set_current_page(i)
+        if self.mode_pref == "pages":
+            tab.set_mode("pages")
         return tab
+
+    def on_switch_page(self, nb, page, i):
+        self.win.set_title(f"{page.title} – scourge-pdf" if page.path else "scourge-pdf")
+        self.sync_mode(page)
+        if page.path:
+            self.touch(page.path)
+
+    def sync_mode(self, tab=None):
+        """Schalter oben links zeigt den Modus des gewählten Tabs."""
+        tab = tab or self.current()
+        if tab is None:
+            return
+        self._mode_sync = True
+        self.mode_btns[tab.mode].set_active(True)
+        self._mode_sync = False
+
+    def on_mode(self, key, btn):
+        if self._mode_sync or not btn.get_active():
+            return
+        tab = self.current()
+        if tab is None:
+            return
+        self.mode_pref = key
+        if tab.set_mode(key) is False:
+            self.sync_mode(tab)
+
+    # ---------- zuletzt geöffnet (Strg+Tab) ----------
+    def touch(self, path):
+        path = os.path.abspath(path)
+        if self.recent[:1] == [path]:
+            return
+        self.recent = [path] + [p for p in self.recent if p != path][:29]
+        try:
+            os.makedirs(os.path.dirname(RECENT_FILE), exist_ok=True)
+            with open(RECENT_FILE, "w") as f:
+                json.dump(self.recent, f)
+        except OSError:
+            pass
+
+    def jump_last(self):
+        """Strg+Tab: zur zuletzt geöffneten anderen PDF – nochmal drücken springt zurück. Gilt auch nach einem Neustart."""
+        tab = self.current()
+        here = os.path.abspath(tab.path) if tab and tab.path else None
+        for p in self.recent:
+            if p != here and os.path.exists(p):
+                return self.open_path(p)
+        self.notify("Noch keine andere PDF geöffnet.")
+
+    def ask_pages(self, tabs, proceed):
+        """Ungespeicherte Seitenänderungen: speichern, verwerfen oder abbrechen."""
+        dirty = [t for t in tabs if t.pages is not None and t.pages.dirty]
+        names = ", ".join(t.pages.name() for t in dirty)
+        dlg = Gtk.AlertDialog(message="Ungespeicherte Seitenänderungen",
+                              detail=f"{names}: Die Änderungen an den Seiten sind noch nicht gespeichert.",
+                              buttons=["Abbrechen", "Verwerfen", "Speichern"], cancel_button=0, default_button=2)
+
+        def chain(rest):
+            if not rest:
+                return proceed()
+            rest[0].pages.save(then=lambda _p: chain(rest[1:]))
+
+        def done(d, res):
+            try:
+                i = d.choose_finish(res)
+            except GLib.Error:
+                return
+            if i == 1:
+                for t in dirty:
+                    t.pages.dirty = False
+                proceed()
+            elif i == 2:
+                chain(dirty)
+        dlg.choose(self.win, None, done)
 
     def number_tabs(self):
         sup = "¹²³⁴⁵⁶⁷⁸⁹"
@@ -542,7 +732,7 @@ class PdfApp(Gtk.Application):
         tab = tab or self.current()
         if tab is None:
             return
-        if not force and tab.view.dirty:
+        if not force and (tab.view.dirty or (tab.pages is not None and tab.pages.dirty)):
             return self.confirm_unsaved([tab], lambda: self.close_tab(tab, force=True))
         tab.shutdown()
         label = self.notebook.get_tab_label(tab)
@@ -571,6 +761,10 @@ class PdfApp(Gtk.Application):
                 v.save(quiet=True)
         dirty = [t for t in tabs if t.view.dirty]
         if not dirty:
+            if any(t.pages is not None and t.pages.dirty for t in tabs):
+                if not self.win.get_visible():
+                    self.win.present()
+                return self.ask_pages(tabs, proceed)
             return proceed()
         if not self.win.get_visible():
             self.win.present()

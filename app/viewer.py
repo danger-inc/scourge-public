@@ -4,6 +4,7 @@
 # Anmerkungen sind echte PDF-Anmerkungen (Poppler) – andere PDF-Programme zeigen und bearbeiten sie weiter.
 # Seiten werden erst gerendert, wenn sie ins Bild scrollen (auch dicke PDFs bleiben flüssig).
 import ctypes
+import math
 import threading
 import os
 
@@ -15,6 +16,8 @@ gi.require_version("Graphene", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gtk, Pango, PangoCairo
 
 from pdfextra import ExtraMixin
+import pdfmore
+from pdfmore import MoreMixin
 
 try:
     import glass
@@ -64,6 +67,16 @@ popover.pdf-pop textview, popover.pdf-pop textview text { background-color: alph
 popover.pdf-pop textview { border: 1px solid alpha(@primary, 0.45); border-radius: 4px; padding: 4px 6px; }
 .hits { font-size: 11px; color: alpha(@foreground, 0.6); }
 .diff-del { color: #ff8f8f; }
+.ist-find { background-color: alpha(@background, 0.94); border: 1px solid alpha(@primary, 0.55); border-radius: 6px;
+    padding: 3px 4px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+.ist-find entry, .ist-find searchentry, .ist-find entry.pb, .ist-find searchentry.pb {
+    background-color: alpha(@foreground, 0.07); background-image: none; border: 1px solid transparent; border-radius: 4px;
+    box-shadow: none; min-height: 24px; padding: 0 6px; outline: none; color: @foreground; }
+.ist-find entry:focus-within, .ist-find searchentry:focus-within { border-color: @primary; }
+.ist-find button, .ist-find button.pb { background: none; background-image: none; box-shadow: none; border: 1px solid transparent;
+    border-radius: 4px; min-height: 22px; min-width: 22px; padding: 0 6px; color: @foreground; }
+.ist-find button:hover { background-color: alpha(@primary, 0.2); }
+.ist-find .wstatus { color: alpha(@foreground, 0.6); font-size: 12px; padding: 0 4px; }
 """
 GAP = 8
 POS_FILE = os.path.expanduser("~/.config/scourge/pdf-pos.json")
@@ -106,23 +119,25 @@ def pos_put(path, d):
 # (Schlüssel, Symbol, Name, Taste)
 TOOLS = (("text", "󰊄", "text schreiben", "t"), ("select", "󰇀", "text auswählen", "v"),
          ("highlight", "󰸱", "markieren", "h"), ("underline", "󰊇", "unterstreichen", "u"),
-         ("strike", "󰊀", "durchstreichen", "d"), ("ink", "󰏪", "stift", "p"), ("rect", "󰹟", "rahmen", "r"),
+         ("strike", "󰊀", "durchstreichen", "d"), ("ink", "󰏪", "stift", "p"), ("rect", "󰹟", "formen", "r"), ("stamp", "◈", "stempel", "m"),
          ("note", "󰆉", "notiz", "n"), ("sign", "󰷻", "unterschrift", "s"), ("redact", "󰈉", "schwärzen", "x"),
          ("erase", "󰇾", "radierer", "e"))
 TOOL_TIPS = {"select": "Text auswählen, kopieren, Links folgen", "highlight": "Text mit dem Textmarker markieren",
              "underline": "Text unterstreichen", "strike": "Text durchstreichen",
              "text": "Text auf die Seite setzen – Klick auf ein Textfeld bearbeitet es, Ziehen verschiebt es, Auswahl im Feld lässt sich einzeln formatieren",
-             "ink": "Freihand zeichnen", "rect": "Rahmen aufziehen", "note": "Notiz anheften",
+             "ink": "Freihand zeichnen", "rect": "Rahmen, Ellipse, Linie oder Pfeil aufziehen – Rechtsklick auf das Symbol wählt die Art", "note": "Notiz anheften",
              "sign": "Gespeicherte Unterschrift per Klick auf die Seite setzen (Größe: Breite)",
+             "stamp": "Stempel mit Klick auf die Seite setzen (Text und Größe rechts)",
              "redact": "Bereiche aufziehen, die endgültig geschwärzt werden sollen",
              "erase": "Anmerkung anklicken, um sie zu entfernen"}
+SHAPES = (("rect", "Rahmen"), ("ellipse", "Ellipse"), ("line", "Linie"), ("arrow", "Pfeil"))
 MARKUP = ("highlight", "underline", "strike")
 CUSTOM_COLORS = os.path.expanduser("~/.config/scourge/pdf-colors.json")
 COLORS = (("gelb", "#ffd400"), ("grün", "#62d26f"), ("blau", "#3d8bff"), ("rot", "#e5322d"),
           ("pink", "#ff5fc4"), ("schwarz", "#1b1b1b"))
 FONTS = (("Sans", "Sans"), ("Serif", "Serif"), ("Mono", "Monospace"))
 DEFAULT_COLOR = {"sign": "#1a3d8f", "highlight": "#ffd400", "underline": "#e5322d", "strike": "#e5322d", "text": "#1b1b1b",
-                 "ink": "#3d8bff", "rect": "#e5322d", "note": "#ffd400"}
+                 "ink": "#3d8bff", "rect": "#e5322d", "note": "#ffd400", "stamp": "#e5322d"}
 
 
 def _poppler():
@@ -279,6 +294,8 @@ def clone_annot(doc, page, a):
     elif t == T.TEXT:
         n = P.AnnotText.new(doc, rect)
         n.set_icon(a.get_icon() or "Note")
+        if a.get_label():
+            n.set_label(a.get_label())
     else:
         return None
     if color and t != T.FREE_TEXT:
@@ -472,7 +489,7 @@ class PageWidget(Gtk.Widget):
         self._draw(self, cr, w, h, self._i)
 
 
-class PdfView(ExtraMixin, Gtk.Box):
+class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
     bold = italic = underline = False       # Formatierung der Werkzeugleiste (Text-Werkzeug)
     _syncing = False            # Werkzeugleiste wird gerade vom Programm gesetzt (löst keine Änderung aus)
     _tmode = None               # laufende Maus-Aktion im Textfeld: ("sel"|"word"|"move"|"pick", …)
@@ -501,6 +518,9 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.tool = "select"
         self.colors = dict(DEFAULT_COLOR)
         self.width = 2.0        # Strichstärke für Stift und Rahmen
+        self.shape = "rect"     # Art beim Werkzeug „formen“: rect | ellipse | line | arrow
+        self.stamp_i, self.stamp_size = 0, 34.0
+        self.stamp_ghost = None
         self.font_size = 14.0
         self.font = "Sans"
         self.sel = None         # (Seite, Index A, Index B)
@@ -538,26 +558,19 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.page_lbl.set_hexpand(True)          # Zeilen füllen sich bündig, auch wenn sie umbrechen
         head.append(self.nav)
         zoomg = self._group()
-        zoomg.append(self._btn("󰍴", "Verkleinern (Strg+−)", lambda: self.set_zoom(self.zoom / 1.25)))
+        zoomg.append(self._btn("󰍴", "Verkleinern (Strg+−)", lambda: self.zoom_by(1 / 1.25)))
         self.zoom_lbl = self._btn("Breite", "Auf Fensterbreite einpassen (Strg+0)", self.fit_width, "grow")
         self.zoom_lbl.set_hexpand(True)
         zoomg.append(self.zoom_lbl)
-        zoomg.append(self._btn("󰐕", "Vergrößern (Strg++)", lambda: self.set_zoom(self.zoom * 1.25)))
+        zoomg.append(self._btn("󰐕", "Vergrößern (Strg++)", lambda: self.zoom_by(1.25)))
         zoomg.set_hexpand(True)
         head.append(zoomg)
         bar.append(head)
         sg = self._group()
         sg.set_hexpand(True)          # Suche füllt den freien Platz: keine leere Lücke, Container enden bündig
-        self.search = Gtk.SearchEntry(placeholder_text="Im PDF suchen", width_chars=12, hexpand=True)
-        self.search.add_css_class("pb")
-        self.search.connect("activate", lambda *_: self.find(self.search.get_text()))
-        self.search.connect("next-match", lambda *_: self.step_hit(1))
-        self.search.connect("previous-match", lambda *_: self.step_hit(-1))
-        self.search.connect("stop-search", lambda *_: self.find(""))
-        sg.append(self.search)
-        self.hit_lbl = Gtk.Label(label="", margin_end=4)
-        self.hit_lbl.add_css_class("hits")
-        sg.append(self.hit_lbl)
+        self.find_btn = self._btn("󰍉  im PDF suchen", "Suchen (Strg+F) – Enter springt zum nächsten Treffer", self.toggle_find, "grow")
+        self.find_btn.set_hexpand(True)
+        sg.append(self.find_btn)
         tail = Gtk.Box(spacing=8, hexpand=True)       # Suche + Aktionen bleiben beim Umbrechen zusammen
         tail.append(sg)
         bar.append(tail)
@@ -580,7 +593,9 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.set_focusable(True)
         body = Gtk.Box(vexpand=True)
         self.body = body
-        body.append(self.scroll)
+        ov = Gtk.Overlay(child=self.scroll, hexpand=True, vexpand=True)
+        body.append(ov)
+        self._build_find(ov)
         self.append(body)
         self.extra_init(body)
         va = self.scroll.get_vadjustment()
@@ -596,6 +611,13 @@ class PdfView(ExtraMixin, Gtk.Box):
         zoom.connect("scroll", self.on_scroll)
         self.scroll.add_controller(zoom)
         self._pinch_t = 0.0
+        self._ptr, self._zt, self._za, self._z_id, self._z_last, self._zooming, self._zfix = None, None, None, None, 0, False, None
+        mot = Gtk.EventControllerMotion()
+        mot.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        mot.connect("motion", lambda _c, x, y: setattr(self, "_ptr", (x, y)))
+        mot.connect("enter", lambda _c, x, y: setattr(self, "_ptr", (x, y)))
+        mot.connect("leave", lambda *_: setattr(self, "_ptr", None))
+        self.scroll.add_controller(mot)
         # Zwei Finger auseinander/zusammen (Touchpad/Touchscreen) = Zoom
         pinch = Gtk.GestureZoom()
         pinch.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -679,6 +701,10 @@ class PdfView(ExtraMixin, Gtk.Box):
             group = group or b
             b.connect("toggled", lambda btn, key=key: btn.get_active() and self.set_tool(key))
             self.tool_btns[key] = b
+            if key == "rect":
+                rc = Gtk.GestureClick(button=3)
+                rc.connect("pressed", lambda g, n, x, y, b=b: (g.set_state(Gtk.EventSequenceState.CLAIMED), self._shape_menu(b)))
+                b.add_controller(rc)
             row.append(b)
         self.tool_name = Gtk.Label(label="auswählen", xalign=0, margin_start=4,
                                   width_chars=max(len(n) for _k, _i, n, _kk in TOOLS))      # feste Breite: kein Springen
@@ -713,6 +739,16 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.size_spin.connect("value-changed", self._on_size)
         self.size_lbl = Gtk.Label(label="", margin_start=4)
         self.size_lbl.add_css_class("key")
+        self.shape_dd = Gtk.DropDown.new_from_strings([n for _k, n in SHAPES])
+        self.shape_dd.set_tooltip_text("Art der Form")
+        self.shape_dd.set_valign(Gtk.Align.CENTER)
+        self.shape_dd.connect("notify::selected", self._on_shape)
+        row.append(self.shape_dd)
+        self.stamp_dd = Gtk.DropDown.new_from_strings([t if "{" not in t else "Datum" for t in pdfmore.STAMPS])
+        self.stamp_dd.set_tooltip_text("Stempeltext")
+        self.stamp_dd.set_valign(Gtk.Align.CENTER)
+        self.stamp_dd.connect("notify::selected", self._on_stamp)
+        row.append(self.stamp_dd)
         self.font_dd = Gtk.DropDown.new_from_strings([n for n, _ in FONTS])
         self.font_dd.set_tooltip_text("Schrift")
         self.font_dd.set_valign(Gtk.Align.CENTER)
@@ -753,7 +789,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         if sg is None or getattr(self, "_style_locked", False) or not self.get_mapped():
             return False
         self._style_locked = True
-        ws = (self.color_box, self.font_dd, self.bold_btn, self.italic_btn, self.underline_btn, self.size_lbl, self.size_spin)
+        ws = (self.color_box, self.shape_dd, self.stamp_dd, self.font_dd, self.bold_btn, self.italic_btn, self.underline_btn, self.size_lbl, self.size_spin)
         was = [w.get_visible() for w in ws]
         for w in ws:
             w.set_visible(True)
@@ -918,13 +954,14 @@ class PdfView(ExtraMixin, Gtk.Box):
         if key != self.tool:
             self.commit_edit()
             self.tool = key
-            self.sel = self.live = self.hover = self.ghost = self.fhover = None
+            self.sel = self.live = self.hover = self.ghost = self.fhover = self.stamp_ghost = None
+            self.hov_hide()
             if self.editable and not self.tool_btns[key].get_active():
                 self.tool_btns[key].set_active(True)
             self._redraw_all()
         cursor = {"select": "text", "highlight": "text", "underline": "text", "strike": "text", "text": "text",
                   "ink": "crosshair", "rect": "crosshair", "note": "copy", "erase": "default", "sign": "copy",
-                  "redact": "crosshair"}[key]
+                  "redact": "crosshair", "stamp": "copy"}[key]
         for a in self.areas:
             a.set_cursor_from_name(cursor)
         if self.editable:
@@ -947,6 +984,33 @@ class PdfView(ExtraMixin, Gtk.Box):
             self.width = spin.get_value()
         elif self.tool == "sign":
             self.sign_width = spin.get_value()
+        elif self.tool == "stamp":
+            self.stamp_size = spin.get_value()
+
+    def _on_shape(self, dd, _pspec):
+        self.shape = SHAPES[dd.get_selected()][0]
+
+    def _shape_menu(self, btn):
+        """Rechtsklick auf das Formen-Symbol: Art der Form wählen (wie das Dropdown rechts, aber direkt am Werkzeug)."""
+        pop = Gtk.Popover(has_arrow=True, autohide=True)
+        pop.add_css_class("pdf-pop")
+        pop.add_css_class("formats")
+        pop.set_parent(btn)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.add_css_class("pdf-pop-box")
+        for n, (key, name) in enumerate(SHAPES):
+            b = Gtk.Button(label=("● " if key == self.shape else "○ ") + name, focus_on_click=False, halign=Gtk.Align.FILL)
+            b.add_css_class("pb")
+            b.add_css_class("small")
+            b.get_child().set_xalign(0)
+            b.connect("clicked", lambda _b, n=n: (pop.popdown(), self.shape_dd.set_selected(n), self.set_tool("rect")))
+            box.append(b)
+        pop.set_child(box)
+        pop.connect("closed", lambda p: GLib.idle_add(p.unparent))
+        pop.popup()
+
+    def _on_stamp(self, dd, _pspec):
+        self.stamp_i = dd.get_selected()
 
     def _on_font(self, dd, _pspec):
         if self._syncing:
@@ -963,7 +1027,9 @@ class PdfView(ExtraMixin, Gtk.Box):
         cur = self.colors.get(self.tool)
         for hexcol, b in self.color_btns.items():
             (b.add_css_class if hexcol == cur else b.remove_css_class)("active")
-        sized = self.tool in ("text", "ink", "rect", "sign")
+        sized = self.tool in ("text", "ink", "rect", "sign", "stamp")
+        self.shape_dd.set_visible(self.tool == "rect")
+        self.stamp_dd.set_visible(self.tool == "stamp")
         self.font_dd.set_visible(self.tool == "text")
         self.bold_btn.set_visible(self.tool == "text")
         self.italic_btn.set_visible(self.tool == "text")
@@ -975,6 +1041,10 @@ class PdfView(ExtraMixin, Gtk.Box):
             if self.tool == "text":
                 self.size_lbl.set_label("pt")
                 self.size_spin.set_range(6, 500)
+            elif self.tool == "stamp":
+                self.size_lbl.set_label("pt")
+                self.size_spin.set_range(14, 120)
+                self.size_spin.set_value(self.stamp_size)
             elif self.tool == "sign":
                 self.size_lbl.set_label("breite")
                 self.size_spin.set_range(60, 400)
@@ -988,7 +1058,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         self._sync_style_widgets()
         sg = getattr(self, "style_group", None)
         if sg is not None:       # leerer Behälter (z. B. beim Auswählen-Werkzeug): unsichtbar, nimmt aber seinen Platz ein –
-            any_vis = any(w.get_visible() for w in (self.color_box, self.font_dd, self.bold_btn, self.italic_btn,
+            any_vis = any(w.get_visible() for w in (self.color_box, self.shape_dd, self.stamp_dd, self.font_dd, self.bold_btn, self.italic_btn,
                                                     self.underline_btn, self.size_lbl, self.size_spin))      # sonst springt die Kopfzeile
             sg.set_opacity(1 if any_vis else 0)
             sg.set_can_target(any_vis)
@@ -1090,6 +1160,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.in_font_row.set_visible(kind == "text")
         self.in_del.set_visible(annot is not None)
         text = (annot.get_contents() or "") if annot is not None else ""
+        text = text.lstrip(pdfmore.REPLY)                                    # Antworten: Marker nicht anzeigen
         self.in_text.get_buffer().set_text(text)
         size, font = self.font_size, self.font
         if annot is not None and kind == "text":
@@ -1135,7 +1206,10 @@ class PdfView(ExtraMixin, Gtk.Box):
                 self.font = FONTS[self.in_font.get_selected()][1]
                 a = self._make_free_text(i, x, y, text, self.font, self.font_size, self.colors["text"])
             else:
-                a = self._make_note(i, x, y, text)
+                was_reply = old is not None and (old.get_contents() or "").startswith(pdfmore.REPLY)
+                a = self._make_note(i, x, y, (pdfmore.REPLY + text) if was_reply else text)
+                if old is not None and old.get_label():
+                    a.set_label(old.get_label())
             ops.append(("add", i, a))
         if ops:
             self._push(ops)
@@ -1188,15 +1262,17 @@ class PdfView(ExtraMixin, Gtk.Box):
             da.add_controller(drag)
             motion = Gtk.EventControllerMotion()
             motion.connect("motion", self._motion, i)
-            motion.connect("leave", lambda *_: (self._set_hover(None), self._set_fhover(None), self._clear_ghost()))
+            motion.connect("leave", lambda *_: (self.hov_hide(), self._clear_stamp_ghost(), self._set_hover(None), self._set_fhover(None), self._clear_ghost()))
             da.add_controller(motion)
             self.pics.append(p)
             self.areas.append(da)
             self.pages.append(da)
         self.set_tool(self.tool)
+        self._found = ""
         self.search.set_text("")
         self.hit_lbl.set_label("")
         self.fit = True
+        self._zooming, self._z_id, self._zt = False, None, None
         self.scroll.get_vadjustment().set_value(0)
         self._sm_goal = None
         self._sync_tools()
@@ -1236,8 +1312,46 @@ class PdfView(ExtraMixin, Gtk.Box):
         self._refit()
 
     def set_zoom(self, z):
+        self.zoom_to(z, tau=0.09)
+
+    def zoom_by(self, f, ax=None, ay=None, tau=0.09):
+        """Relativ zum ZIEL (nicht zum gerade animierten Stand): schnelle Wiederholungen addieren sich."""
+        self.zoom_to((self._zt if self._z_id else self.zoom) * f, ax, ay, tau)
+
+    def zoom_to(self, z, ax=None, ay=None, tau=0.07):
+        """Weich auf Zoom z gleiten; der Punkt (ax, ay) im Scrollbereich (Zeiger, Pinch-Mitte) bleibt dabei unter dem Finger.
+        Ohne Angabe: Zeiger, wenn er über den Seiten steht, sonst Bildmitte."""
+        z = max(0.2, min(z, 6))
         self.fit = False
-        self._apply_zoom(max(0.2, min(z, 6)))
+        if ax is None:
+            ax, ay = self._ptr or (None, None)
+        if not self._z_id or self._za is None or (ax, ay) != self._za:
+            self._zfix = None            # neuer Ankerpunkt; sonst bleibt der Punkt der ganzen Animation (Rand-Begrenzung driftet nicht)
+        self._want_pos = None            # nie eine alte Leseposition über den Zoom stülpen (Sprung nach oben)
+        self._zt, self._za, self._z_tau = z, (ax, ay), tau
+        if not self.doc:
+            return
+        if not self.scroll.get_mapped():
+            return self._apply_zoom(z, ax, ay)
+        if not self._z_id:
+            self._z_last = 0
+            self._z_id = self.scroll.add_tick_callback(self._z_tick)
+
+    def _z_tick(self, _w, clock):
+        t = clock.get_frame_time()
+        dt = min((t - self._z_last) / 1e6, 0.05) if self._z_last else 1 / 60
+        self._z_last = t
+        cur, goal = self.zoom, self._zt
+        if goal is None or not self.doc:
+            self._z_id = None
+            return GLib.SOURCE_REMOVE
+        done = abs(goal - cur) < 0.0008 * goal
+        nz = goal if done else cur * (goal / cur) ** (1 - math.exp(-dt / self._z_tau))   # geometrisch: gleichmäßiges Tempo
+        self._zfix = self._apply_zoom(nz, *self._za, live=not done, fix=self._zfix) or self._zfix
+        if done:
+            self._z_id = self._zt = None
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
 
     def _anchor(self):
         """Bildmitte als (Seite, Anteil in der Seite) – bleibt beim Zoomen an derselben Stelle."""
@@ -1249,21 +1363,67 @@ class PdfView(ExtraMixin, Gtk.Box):
         h = max(1.0, self.sizes[i][1] * self.zoom)
         return i, max(0.0, min((mid - offs[i]) / h, 1.0))
 
-    def _apply_zoom(self, z):
-        page = self.current_page()
-        anchor = self._anchor() if self.doc and self.sizes else None
-        if getattr(self, "_want_pos", None):
-            anchor, self._want_pos = self._want_pos, None
+    def _apply_zoom(self, z, ax=None, ay=None, live=False, fix=None):
+        """Zoom setzen und im SELBEN Schritt die Scrollwerte neu berechnen (die Gesamtgröße ist bekannt) – so springt nichts,
+        auch nicht für ein Bild. live=True: mitten in der Animation, die Seiten werden erst am Ende scharf neu gerendert."""
+        import bisect
+        va, ha = self.scroll.get_vadjustment(), self.scroll.get_hadjustment()
+        ready = bool(self.doc and self.sizes and va.get_page_size() > 10 and ha.get_page_size() > 10
+                     and not getattr(self, "_want_pos", None))
+        if not ready:                    # noch nicht gelayoutet / Leseposition wird wiederhergestellt: spätere Korrektur
+            page = self.current_page()
+            anchor = self._anchor() if self.doc and self.sizes else None
+            if getattr(self, "_want_pos", None):
+                anchor, self._want_pos = self._want_pos, None
+            self.zoom = z
+            self.done = {}
+            self._gen += 1
+            self._zooming = False
+            for p, (w, h) in zip(self.pics, self.sizes):
+                p.set_size_request(int(w * z), int(h * z))
+            self.zoom_lbl.set_label("Breite" if self.fit else f"{round(z * 100)} %")
+            if anchor:
+                GLib.idle_add(self._restore_anchor, *anchor)
+            else:
+                GLib.idle_add(lambda: (self.goto(page, render_only=False), False)[-1])
+            return
+        self._sm_goal = None
+        vh, vw = va.get_page_size(), ha.get_page_size()
+        if ax is None:
+            ax, ay = vw / 2, vh / 2
+        old, offs = self.zoom, self.offsets()
+        mw = max(w for w, _ in self.sizes)
+
+        def pw(zz):                      # Breite der Seitenspalte
+            return int(mw * zz)
+
+        def x0(zz):                      # linker Rand der Seitenspalte (Spalte ist im Scrollbereich zentriert)
+            bw = pw(zz) + 2 * GAP
+            return (max(bw, vw) - bw) / 2 + GAP
+        if fix:
+            i, fy, fx = fix
+        else:                            # Punkt unter dem Zeiger: Seite, Anteil in Höhe und Breite
+            cy = va.get_value() + ay
+            i = max(0, bisect.bisect_right(offs, cy) - 1)
+            fy = (cy - offs[i]) / max(1.0, self.sizes[i][1] * old)
+            fx = (ha.get_value() + ax - x0(old)) / max(1.0, pw(old))
         self.zoom = z
-        self.done = {}
-        self._gen += 1
         for p, (w, h) in zip(self.pics, self.sizes):
             p.set_size_request(int(w * z), int(h * z))
+        offs = self.offsets()
+        up_y = max(vh, offs[-1] + int(self.sizes[-1][1] * z) + GAP)
+        up_x = max(vw, pw(z) + 2 * GAP)
+        vy = offs[i] + fy * self.sizes[i][1] * z - ay
+        vx = x0(z) + fx * pw(z) - ax
+        va.configure(max(0, min(vy, up_y - vh)), 0, up_y, va.get_step_increment(), va.get_page_increment(), vh)
+        ha.configure(max(0, min(vx, up_x - vw)), 0, up_x, ha.get_step_increment(), ha.get_page_increment(), vw)
         self.zoom_lbl.set_label("Breite" if self.fit else f"{round(z * 100)} %")
-        if anchor:
-            GLib.idle_add(self._restore_anchor, *anchor)
-        else:
-            GLib.idle_add(lambda: (self.goto(page, render_only=False), False)[-1])
+        self._zooming = live
+        if not live:
+            self.done = {}
+            self._gen += 1
+            self.update()
+        return i, fy, fx
 
     def _restore_anchor(self, i, frac, tries=0):
         va = self.scroll.get_vadjustment()
@@ -1278,6 +1438,7 @@ class PdfView(ExtraMixin, Gtk.Box):
 
     # ---------- Leseposition merken ----------
     def _pos_arm(self):
+        self._want_pos = None
         self._pos_ready = True
         return False
 
@@ -1427,6 +1588,8 @@ class PdfView(ExtraMixin, Gtk.Box):
         if not self.doc:
             return
         self._pos_queue()
+        if self._zooming:               # Zoom läuft: erst am Ende scharf rendern (die alten Bilder werden solange gestreckt)
+            return
         va = self.scroll.get_vadjustment()
         top, bottom = va.get_value(), va.get_value() + max(va.get_page_size(), 400)
         offs = self.offsets()
@@ -1551,6 +1714,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         return False
 
     def _rerender(self, i):
+        self.hov_invalidate(i)
         self.done.pop(i, None)
         self.layouts.pop(i, None)
         self.update()
@@ -1561,9 +1725,100 @@ class PdfView(ExtraMixin, Gtk.Box):
             a.queue_draw()
 
     # ---------- Suche ----------
+    _found = ""
+
+    def _build_find(self, overlay):
+        """Schwebende Suchleiste oben rechts im Lesebereich (Strg+F), Aufbau wie in notist."""
+        self.search = Gtk.SearchEntry(placeholder_text="Im PDF suchen", width_chars=20)
+        self.search.add_css_class("pb")
+        self.search.connect("search-changed", lambda *_: self._find_queue())
+        self.search.connect("activate", lambda *_: self._find_enter(1))
+        self.search.connect("next-match", lambda *_: self._find_enter(1))
+        self.search.connect("previous-match", lambda *_: self._find_enter(-1))
+        self.search.connect("stop-search", lambda *_: self.hide_find())
+        kc = Gtk.EventControllerKey()
+        kc.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        kc.connect("key-pressed", lambda _c, kv, _kc, st: (kv in (Gdk.KEY_Return, Gdk.KEY_KP_Enter)
+                                                         and bool(st & Gdk.ModifierType.SHIFT_MASK)
+                                                         and (self._find_enter(-1) or True)))
+        self.search.add_controller(kc)
+        self.hit_lbl = Gtk.Label(label="", width_chars=9, xalign=0.5)
+        self.hit_lbl.add_css_class("wstatus")
+        bar = Gtk.Box(spacing=2, valign=Gtk.Align.CENTER)
+        bar.add_css_class("ist-find")
+        bar.append(self.search)
+        bar.append(self.hit_lbl)
+        bar.append(self._btn("󰅃", "Vorheriger Treffer (Umschalt+Enter)", lambda: self._find_enter(-1)))
+        bar.append(self._btn("󰅀", "Nächster Treffer (Enter)", lambda: self._find_enter(1)))
+        bar.append(self._btn("󰅖", "Schließen (Esc oder Strg+F)", self.hide_find))
+        self.find_rev = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN, reveal_child=False,
+                                     halign=Gtk.Align.END, valign=Gtk.Align.START, margin_top=6, margin_end=16)
+        self.find_rev.set_child(bar)
+        overlay.add_overlay(self.find_rev)
+        overlay.set_measure_overlay(self.find_rev, False)
+        self._find_id = None
+
+    def _find_queue(self):
+        if self._find_id:
+            GLib.source_remove(self._find_id)
+        self._find_id = GLib.timeout_add(220, self._find_now)
+
+    def _find_now(self):
+        if self._find_id:
+            GLib.source_remove(self._find_id)
+            self._find_id = None
+        text = self.search.get_text().strip()
+        if text != self._found:
+            self.find(text)
+        return False
+
+    def _find_enter(self, d):
+        """Enter = nächster Treffer (Umschalt+Enter = vorheriger); nur ein geänderter Suchtext startet neu."""
+        if self._find_id:
+            GLib.source_remove(self._find_id)
+            self._find_id = None
+        text = self.search.get_text().strip()
+        if text != self._found or not self.hits:
+            self.find(text)
+        else:
+            self.step_hit(d)
+
+    def find_open(self):
+        return self.find_rev.get_reveal_child()
+
+    def toggle_find(self):
+        if not self.doc:
+            return
+        foc = self.get_root().get_focus() if self.get_root() else None
+        in_bar = foc is not None and (foc is self.search or foc.is_ancestor(self.search))
+        if self.find_open() and in_bar:
+            return self.hide_find()
+        self.find_rev.set_reveal_child(True)
+        sel = " ".join((self.selected_text() or "").split()) if self.sel else ""
+        if sel and len(sel) < 120:
+            self.search.set_text(sel)
+        self.search.grab_focus()
+        self.search.select_region(0, -1)
+        if self.search.get_text().strip():
+            self._find_now()
+
+    def hide_find(self):
+        if not self.find_open():
+            return
+        self.find_rev.set_reveal_child(False)
+        self.search.set_text("")
+        if self._find_id:
+            GLib.source_remove(self._find_id)
+            self._find_id = None
+        if self._found:
+            self.find("")
+        self.grab_focus()
+
     def find(self, text):
+        text = text.strip()
+        self._found = text
         self.hits, self.hit_i = [], -1
-        if text.strip() and self.doc:
+        if text and self.doc:
             for i, (w, h) in enumerate(self.sizes):
                 for r in self.page(i).find_text(text) or []:
                     self.hits.append((i, (r.x1, h - max(r.y1, r.y2), r.x2, h - min(r.y1, r.y2))))  # unten-links -> oben-links
@@ -1573,7 +1828,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         if self.hits:
             self.step_hit(1)
         else:
-            self.hit_lbl.set_label("nicht gefunden" if text.strip() else "")
+            self.hit_lbl.set_label("nicht gefunden" if text else "")
             self.update()
 
     def step_hit(self, d):
@@ -1769,16 +2024,42 @@ class PdfView(ExtraMixin, Gtk.Box):
         return a
 
     def _make_ink(self, i, pts, color, width):
+        return self._make_strokes(i, [pts], color, width)
+
+    def _make_strokes(self, i, strokes, color, width):
+        """Ink-Anmerkung aus mehreren Strichen (Seitenkoordinaten, y nach unten)."""
         P = _poppler()
         h = self.sizes[i][1]
-        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        xs = [p[0] for st in strokes for p in st]
+        ys = [p[1] for st in strokes for p in st]
         m = width + 2
         a = P.AnnotInk.new(self.doc, _prect(min(xs) - m, h - max(ys) - m, max(xs) + m, h - min(ys) + m))
         a.set_color(_pcolor(color))
         a.set_border_width(width)
         self.page(i).add_annot(a)
-        set_ink(a, [[(x, h - y) for x, y in pts]])
+        set_ink(a, [[(x, h - y) for x, y in st] for st in strokes])
         return a
+
+    def _make_shape(self, i, box, kind, color, width):
+        if kind in ("line", "arrow"):
+            return self._make_strokes(i, pdfmore.shape_strokes(kind, *box, width), color, width)
+        if kind == "ellipse":
+            P = _poppler()
+            h = self.sizes[i][1]
+            x1, y1, x2, y2 = box
+            a = P.AnnotCircle.new(self.doc, _prect(min(x1, x2), h - max(y1, y2), max(x1, x2), h - min(y1, y2)))
+            a.set_color(_pcolor(color))
+            a.set_border_width(width)
+            self.page(i).add_annot(a)
+            return a
+        return self._make_rect(i, box, color, width)
+
+    def _place_stamp(self, i, px, py):
+        text = pdfmore.stamp_text(self.stamp_i)
+        strokes, w = pdfmore.stamp_strokes(text, self.stamp_size, px, py)
+        a = self._make_strokes(i, strokes, self.colors["stamp"], w)
+        self._push([("add", i, a)])
+        self._rerender(i)
 
     def _make_rect(self, i, box, color, width):
         P = _poppler()
@@ -1869,6 +2150,13 @@ class PdfView(ExtraMixin, Gtk.Box):
         self.redo_stack.clear()
         self.dirty = True
         self._sync_tools()
+        self._cmt_refresh()
+
+    def _cmt_refresh(self):
+        self.hov_invalidate()
+        side = getattr(self, "side", None)
+        if side is not None:
+            side.comments_dirty()
 
     def _apply(self, ops, inverse):
         pages = set()
@@ -1902,6 +2190,7 @@ class PdfView(ExtraMixin, Gtk.Box):
             self.redo_stack.append(ops)
             self.dirty = True
             self._sync_tools()
+            self._cmt_refresh()
 
     def redo(self):
         if not self.redo_stack and self.struct_redo and self.struct_undo(redo=True):
@@ -1912,6 +2201,7 @@ class PdfView(ExtraMixin, Gtk.Box):
             self.undo_stack.append(ops)
             self.dirty = True
             self._sync_tools()
+            self._cmt_refresh()
 
     # ---------- Speichern ----------
     # ---------- automatisch speichern ----------
@@ -2225,7 +2515,11 @@ class PdfView(ExtraMixin, Gtk.Box):
                 if not (self.form_click(i, px, py) or self._follow_link(i, px, py)):
                     hit = [a for a, _ in self.annots_at(i, px, py)
                            if a.get_annot_type() in (_poppler().AnnotType.FREE_TEXT, _poppler().AnnotType.TEXT)]
-                    if hit and self.editable:
+                    th = None if (hit and hit[0].get_annot_type() == _poppler().AnnotType.FREE_TEXT and self.editable) \
+                        else self.thread_at(i, px, py)
+                    if th:
+                        self.open_thread(i, th)                  # Kommentar lesen, markieren, kopieren
+                    elif hit and self.editable:
                         if hit[0].get_annot_type() == _poppler().AnnotType.FREE_TEXT:
                             self.set_tool("text")
                             self.start_edit(i, px, py, hit[0])
@@ -2258,14 +2552,17 @@ class PdfView(ExtraMixin, Gtk.Box):
         elif t == "rect" and self.live:
             box = self.live[2]
             self.live = None
-            if abs(box[2] - box[0]) > 3 and abs(box[3] - box[1]) > 3:
-                a = self._make_rect(i, box, self.colors["rect"], self.width)
+            line = self.shape in ("line", "arrow")
+            if (math.hypot(box[2] - box[0], box[3] - box[1]) > 5) if line else (abs(box[2] - box[0]) > 3 and abs(box[3] - box[1]) > 3):
+                a = self._make_shape(i, box, self.shape, self.colors["rect"], self.width)
                 self._push([("add", i, a)])
                 self._rerender(i)
             else:
                 self.areas[i].queue_draw()
         elif t == "sign" and click:
             self.place_signature(i, px, py)
+        elif t == "stamp" and click:
+            self._place_stamp(i, px, py)
         elif t == "redact" and self.live:
             box = self.live[2]
             self.live = None
@@ -2300,6 +2597,13 @@ class PdfView(ExtraMixin, Gtk.Box):
     def _motion(self, ctrl, x, y, i):
         px, py = self._pt(i, x, y)
         t, e = self.tool, self.edit
+        self.hov_motion(i, px, py)
+        if t == "stamp":
+            old = self.stamp_ghost
+            self.stamp_ghost = (i, px, py)
+            for g in (old, self.stamp_ghost):
+                if g:
+                    self.areas[g[0]].queue_draw()
         if self.editable and t in ("text", "select") and not self._drag:
             cursor, over = None, None
             if e and e["i"] == i:
@@ -2339,6 +2643,11 @@ class PdfView(ExtraMixin, Gtk.Box):
         elif t == "select" and not self._drag:
             link = self._link_at(i, px, py)
             self.areas[i].set_cursor_from_name("pointer" if link else "text")
+
+    def _clear_stamp_ghost(self):
+        g, self.stamp_ghost = self.stamp_ghost, None
+        if g and g[0] < len(self.areas):
+            self.areas[g[0]].queue_draw()
 
     def _set_fhover(self, hv):
         if hv != self.fhover:
@@ -2977,6 +3286,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         rng = self.sel_range()
         return bool((rng and rng[0] == i) or (self.live and self.live[0] == i) or (self.edit and self.edit["i"] == i)
                     or (self.ghost and self.ghost[0] == i and self.tool == "text")
+                    or (self.stamp_ghost and self.stamp_ghost[0] == i and self.tool == "stamp")
                     or (self.hover and self.hover[0] == i) or (self.fhover and self.fhover[0] == i) or self.extra_active(i))
 
     def _draw_overlay(self, area, cr, w, h, i):
@@ -3004,8 +3314,31 @@ class PdfView(ExtraMixin, Gtk.Box):
                 cr.stroke()
             elif kind == "rect":
                 x1, y1, x2, y2 = data
-                cr.rectangle(min(x1, x2) * z, min(y1, y2) * z, abs(x2 - x1) * z, abs(y2 - y1) * z)
+                if self.shape == "ellipse":
+                    cr.save()
+                    cr.translate((x1 + x2) / 2 * z, (y1 + y2) / 2 * z)
+                    cr.scale(max(0.01, abs(x2 - x1) / 2 * z), max(0.01, abs(y2 - y1) / 2 * z))
+                    cr.arc(0, 0, 1, 0, 6.2832)
+                    cr.restore()
+                elif self.shape in ("line", "arrow"):
+                    for st in pdfmore.shape_strokes(self.shape, x1, y1, x2, y2, self.width):
+                        cr.move_to(st[0][0] * z, st[0][1] * z)
+                        for x, y in st[1:]:
+                            cr.line_to(x * z, y * z)
+                else:
+                    cr.rectangle(min(x1, x2) * z, min(y1, y2) * z, abs(x2 - x1) * z, abs(y2 - y1) * z)
                 cr.stroke()
+        if self.stamp_ghost and self.stamp_ghost[0] == i and self.tool == "stamp":
+            sts, sw = pdfmore.stamp_strokes(pdfmore.stamp_text(self.stamp_i), self.stamp_size, *self.stamp_ghost[1:])
+            r, g, b = _rgb(self.colors["stamp"])
+            cr.set_source_rgba(r, g, b, 0.45)
+            cr.set_line_width(max(1, sw * z))
+            cr.set_line_join(1)
+            for st in sts:
+                cr.move_to(st[0][0] * z, st[0][1] * z)
+                for x, y in st[1:]:
+                    cr.line_to(x * z, y * z)
+            cr.stroke()
         if self.edit and self.edit["i"] == i:
             self._draw_edit(cr, z)
         elif self.ghost and self.ghost[0] == i and self.tool == "text":
@@ -3032,7 +3365,7 @@ class PdfView(ExtraMixin, Gtk.Box):
         if self.edit and self._edit_key(k, keyval, c, s):
             return True
         focus = self.get_root().get_focus() if self.get_root() else None
-        typing = isinstance(focus, Gtk.Text) or isinstance(focus, Gtk.TextView)
+        typing = isinstance(focus, (Gtk.Text, Gtk.TextView)) or (isinstance(focus, Gtk.Label) and focus.get_selectable())
         if not typing and not c and k in ("Left", "Right") and not (mods & Gdk.ModifierType.ALT_MASK) \
                 and self._nav_ok(focus):
             self.skip_page(1 if k == "Right" else -1)
@@ -3043,15 +3376,17 @@ class PdfView(ExtraMixin, Gtk.Box):
         elif k in ("Page_Up", "Prior"):
             self.skip_page(-1)
         elif c and k in ("plus", "equal", "KP_Add"):
-            self.set_zoom(self.zoom * 1.25)
+            self.zoom_by(1.25)
         elif c and k in ("minus", "KP_Subtract"):
-            self.set_zoom(self.zoom / 1.25)
+            self.zoom_by(1 / 1.25)
         elif c and k == "0":
             self.fit_width()
         elif k == "F9":
             self.toggle_side()
+        elif self.editable and c and k == "p":
+            self.print_dialog()
         elif c and k == "f":
-            self.search.grab_focus()
+            self.toggle_find()
         elif c and k == "g":
             self.ask_page()
         elif c and k == "c" and (self.sel or getattr(self, "_last_text", "")) and not typing:
@@ -3062,6 +3397,8 @@ class PdfView(ExtraMixin, Gtk.Box):
             self.redo()
         elif self.editable and c and k.lower() == "s":
             self.save_as() if (s or not self.path) else self.save()
+        elif k == "Escape" and not typing and self.find_open():
+            self.hide_find()
         elif k == "Escape" and not typing and (self.sel or self.tool != "select"):
             self.sel = None
             self._redraw_all()
@@ -3077,28 +3414,19 @@ class PdfView(ExtraMixin, Gtk.Box):
         return True
 
     def _pinch_begin(self, *_):
-        self._pinch0 = self.zoom
+        self._pinch0 = self._zt if self._z_id else self.zoom
         self._pinch_t = float("inf")
 
     def _on_pinch(self, g, scale):
-        target = max(0.2, min(self._pinch0 * scale, 6))
-        self._pinch_to = target
-        if self._pinch_id is None:                      # höchstens ~20 Neuberechnungen pro Sekunde
-            self._pinch_id = GLib.timeout_add(50, self._pinch_apply)
-
-    def _pinch_apply(self):
-        self._pinch_id = None
-        if abs(self._pinch_to - self.zoom) > 0.004:
-            self.fit = False
-            self._apply_zoom(self._pinch_to)
-        return False
+        ok, cx, cy = g.get_bounding_box_center()
+        self.zoom_to(self._pinch0 * scale, cx if ok else None, cy if ok else None, tau=0.035)
 
     def on_scroll(self, ctrl, dx, dy):
         # Während (und kurz nach) dem Pinch rutschen Restbewegungen als Scrollen durch → verschlucken
         if GLib.get_monotonic_time() - self._pinch_t < 300000:
             return True
         if ctrl.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
-            self.set_zoom(self.zoom * (0.9 if dy > 0 else 1.1))
+            self.zoom_by(math.exp(-max(-4.0, min(4.0, dy)) * 0.12))   # Rastermaus: ~±12 % je Raste, Touchpad: stufenlos
             return True
         return False
 

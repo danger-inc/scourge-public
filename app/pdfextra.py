@@ -14,7 +14,7 @@ import uuid
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, Gio, GLib, Gtk
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 QPDF = shutil.which("qpdf")
 SIGN_FILE = os.path.expanduser("~/.config/scourge/signatur.json")
@@ -222,7 +222,8 @@ class SidePanel(Gtk.Box):
         group = None
         for key, label, tip in (("pages", "󰕮  Seiten", "Miniaturen, Seiten verwalten"),
                                 ("outline", "󰙅  Gliederung", "Lesezeichen des Dokuments"),
-                                ("hits", "󰍉  Treffer", "Alle Suchtreffer im Dokument")):
+                                ("hits", "󰍉  Treffer", "Alle Suchtreffer im Dokument"),
+                                ("comments", "󰅺  Kommentare", "Alle Notizen, Markierungen und Kommentare lesen")):
             b = Gtk.ToggleButton(label=label, tooltip_text=tip, focus_on_click=False)
             b.add_css_class("pb"); b.add_css_class("small")
             if group:
@@ -247,17 +248,30 @@ class SidePanel(Gtk.Box):
         if view.editable:
             pbox.append(self._page_tools())
         self.stack.add_named(pbox, "pages")
-        # --- Gliederung
+        # --- Gliederung / Lesezeichen
         self.outline_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, activate_on_single_click=True)
         self.outline_list.add_css_class("thumbs")
-        self.outline_list.connect("row-activated", lambda lb, row: self.view.goto(row.page, y_in_page=row.top, smooth=True))
+        self.outline_list.connect("row-activated", self._outline_go)
         osc = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         osc.set_child(self.outline_list)
         self.outline_empty = Gtk.Label(label="Dieses PDF hat keine Lesezeichen.", wrap=True, margin_top=12)
         self.outline_empty.add_css_class("note")
-        obox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        obox.append(osc)
+        obox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        if view.editable:
+            self.bm_add = Gtk.Button(label="󰃀  Lesezeichen hier setzen", focus_on_click=False,
+                                     tooltip_text="Lesezeichen an der aktuellen Stelle anlegen")
+            self.bm_add.add_css_class("pb"); self.bm_add.add_css_class("small")
+            self.bm_add.connect("clicked", lambda *_: self._bm_edit(None))
+            self.bm_entry = Gtk.Entry(visible=False, placeholder_text="Name – Enter = speichern, Esc = abbrechen")
+            self.bm_entry.connect("activate", self._bm_commit)
+            kc = Gtk.EventControllerKey()
+            kc.connect("key-pressed", lambda c, kv, *_: (self._bm_cancel(), True)[1] if kv == Gdk.KEY_Escape else False)
+            self.bm_entry.add_controller(kc)
+            self._bm_path = None
+            obox.append(self.bm_add)
+            obox.append(self.bm_entry)
         obox.append(self.outline_empty)
+        obox.append(osc)
         self.stack.add_named(obox, "outline")
         # --- Treffer
         self.hits_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, activate_on_single_click=True)
@@ -277,6 +291,24 @@ class SidePanel(Gtk.Box):
             self.redact_hits.set_visible(False)
             hbox.append(self.redact_hits)
         self.stack.add_named(hbox, "hits")
+        # --- Kommentare
+        self.cmt_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, activate_on_single_click=True)
+        self.cmt_list.add_css_class("thumbs")
+        csc = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        csc.set_child(self.cmt_list)
+        self.cmt_head = Gtk.Label(label="", xalign=0, wrap=True)
+        self.cmt_head.add_css_class("note")
+        self.cmt_only = Gtk.CheckButton(label="nur mit Text")
+        self.cmt_only.set_active(True)
+        self.cmt_only.connect("toggled", lambda *_: self.rebuild_comments())
+        cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        cbox.append(self.cmt_head)
+        cbox.append(self.cmt_only)
+        cbox.append(csc)
+        self.stack.add_named(cbox, "comments")
+        self.stack.connect("notify::visible-child-name", lambda *_: self.stack.get_visible_child_name() == "comments"
+                           and self.rebuild_comments())
+        self._cmt_id = 0
         self.tab_btns["pages"].set_active(True)
         self._thumb_id = 0
         self._thumb_gen = 0
@@ -387,46 +419,118 @@ class SidePanel(Gtk.Box):
 
     # ---------- Gliederung
     def rebuild_outline(self):
+        import pdfmore
         while (r := self.outline_list.get_first_child()):
             self.outline_list.remove(r)
-        n = 0
-        try:
-            P = _poppler()
-            it = P.IndexIter.new(self.view.doc)
-        except Exception:
-            it = None
-        if it is not None:
-            n = self._walk(it, 0)
+        self._bm_cancel() if self.view.editable else None
+        tree = pdfmore.read_outline(self.view.doc) if self.view.doc else []
+        n = self._outline_rows(tree, 0, [])
         self.outline_empty.set_visible(n == 0)
+        if n == 0 and self.view.editable:
+            self.outline_empty.set_label("Noch keine Lesezeichen – oben eins setzen.")
 
-    def _walk(self, it, level):
-        P = _poppler()
+    def _outline_rows(self, nodes, level, path):
+        v = self.view
         count = 0
-        while True:
-            act = it.get_action()
+        for k, nd in enumerate(nodes):
+            row = Gtk.ListBoxRow()
+            row.page = max(0, nd["page"] - 1)
+            h = v.sizes[row.page][1] if row.page < len(v.sizes) else 0
+            row.top = max(0, h - nd["top"]) if nd["top"] is not None and h else 0
+            row.path, row.title = path + [k], nd["title"]
+            box = Gtk.Box(spacing=2, margin_start=6 + 12 * level, margin_top=1, margin_bottom=1)
+            lab = Gtk.Label(label=nd["title"], xalign=0, wrap=True, hexpand=True, margin_top=3, margin_bottom=3)
+            box.append(lab)
+            pg = Gtk.Label(label=str(nd["page"]))
+            pg.add_css_class("key")
+            box.append(pg)
+            if v.editable:
+                for icon, tip, cb in (("✎", "Umbenennen", lambda *_, r=row: self._bm_edit(r)),
+                                      ("✕", "Lesezeichen löschen", lambda *_, r=row: v.bookmark_delete(r.path))):
+                    b = Gtk.Button(label=icon, tooltip_text=tip, focus_on_click=False)
+                    b.add_css_class("pb"); b.add_css_class("small")
+                    b.connect("clicked", cb)
+                    box.append(b)
+            row.set_child(box)
+            self.outline_list.append(row)
+            count += 1 + self._outline_rows(nd["children"], level + 1, path + [k])
+        return count
+
+    def _outline_go(self, lb, row):
+        self.view.goto(row.page, y_in_page=row.top, smooth=True)
+
+    def _bm_edit(self, row):
+        """Eingabezeile für ein neues (row=None) oder umzubenennendes Lesezeichen."""
+        self._bm_path = row.path if row is not None else None
+        if row is not None:
+            self.bm_entry.set_text(row.title)
+        else:
+            txt = ""
             try:
-                title = act.any.title or "?"
-                dest = None
-                if act.type == P.ActionType.GOTO_DEST:
-                    dest = act.goto_dest.dest
-                    if dest.type == P.DestType.NAMED:
-                        dest = self.view.doc.find_dest(dest.named_dest)
-                if dest is not None and dest.page_num:
-                    row = Gtk.ListBoxRow()
-                    row.page, row.top = max(0, dest.page_num - 1), 0
-                    lab = Gtk.Label(label=title, xalign=0, wrap=True, margin_start=6 + 12 * level, margin_top=3,
-                                    margin_bottom=3)
-                    row.set_child(lab)
-                    self.outline_list.append(row)
-                    count += 1
+                txt = " ".join(self.view.selected_text().split())[:60] if hasattr(self.view, "selected_text") else ""
             except Exception:
                 pass
-            child = it.get_child()
-            if child is not None:
-                count += self._walk(child, level + 1)
-            if not it.next():
-                break
-        return count
+            self.bm_entry.set_text(txt or f"Seite {self.view.current_page() + 1}")
+        self.bm_entry.set_visible(True)
+        self.bm_entry.grab_focus()
+        self.bm_entry.select_region(0, -1)
+
+    def _bm_cancel(self):
+        self.bm_entry.set_visible(False)
+        self._bm_path = None
+
+    def _bm_commit(self, *_):
+        t = self.bm_entry.get_text().strip()
+        path = self._bm_path
+        self._bm_cancel()
+        if not t:
+            return
+        if path is None:
+            self.view.bookmark_add(t)
+        else:
+            self.view.bookmark_rename(path, t)
+
+    # ---------- Kommentare
+    def comments_dirty(self):
+        """Nach Änderungen an Anmerkungen: Liste (entprellt) neu aufbauen, wenn der Reiter offen ist."""
+        if self._cmt_id or self.stack.get_visible_child_name() != "comments" or not self.get_mapped():
+            return
+        self._cmt_id = GLib.timeout_add(500, self._cmt_later)
+
+    def _cmt_later(self):
+        self._cmt_id = 0
+        self.rebuild_comments()
+        return False
+
+    def rebuild_comments(self):
+        import pdfmore
+        v = self.view
+        while (r := self.cmt_list.get_first_child()):
+            self.cmt_list.remove(r)
+        if not v.doc:
+            self.cmt_head.set_label("")
+            return
+        allt = []
+        for i in range(len(v.sizes)):
+            allt += pdfmore.threads(pdfmore.comment_items(v, i))
+        only = self.cmt_only.get_active()
+        shown = [t for t in allt if t[0]["text"] or t[1]] if only else allt
+        n_rep = sum(len(t[1]) for t in shown)
+        if only:
+            self.cmt_head.set_label((f"{len(shown)} Kommentar(e)" + (f", {n_rep} Antwort(en)" if n_rep else ""))
+                                    if shown else "Keine Kommentare in diesem PDF.")
+        else:
+            self.cmt_head.set_label(f"{len(shown)} Anmerkung(en), davon {sum(1 for t in shown if t[0]['text'])} mit Text")
+        for parent, replies in shown:
+            row = Gtk.ListBoxRow(activatable=False)
+            row.set_child(pdfmore.thread_widget(
+                parent, replies, jump=self._cmt_jump,
+                on_reply=v.add_reply if v.editable else None,
+                on_delete=v.delete_reply if v.editable else None))
+            self.cmt_list.append(row)
+
+    def _cmt_jump(self, item):
+        self.view.goto(item["page"], y_in_page=max(0, item["top"] - 40), smooth=True)
 
     # ---------- Treffer
     def show_hits(self, text):
@@ -526,6 +630,8 @@ class ExtraMixin:
         """Nach jedem load(): Seitenleiste und Zwischenspeicher neu aufbauen."""
         self.redactions = {}
         self._form_cache = {}
+        self.hov_hide()
+        self.hov_invalidate()
         self._redact_refresh()
         self.side._rows = []
         if self.side_rev.get_reveal_child():
@@ -553,7 +659,14 @@ class ExtraMixin:
             b.connect("clicked", lambda *_: (pop.popdown(), cb()))
             box.append(b)
             return b
+        item("󰐪  Drucken …", self.print_dialog, "Strg+P")
+        item("󰋽  Eigenschaften …", self.props_dialog, "Titel, Autor, Stichwörter, Name für Kommentare")
+        box.append(Gtk.Separator())
         item("󰈔  PDFs anhängen …", lambda: self.pages_append(end=True), "Weitere PDFs ans Ende setzen")
+        item("󰆞  Seiten zuschneiden …", self.crop_dialog, "Ränder abschneiden (rückgängig machbar)")
+        item("󰎠  Seitenzahlen, Kopf- & Fußzeile …", self.numbers_dialog)
+        item("󰸾  Wasserzeichen …", self.watermark_dialog)
+        box.append(Gtk.Separator())
         item("󰏫  Unterschrift ändern …", self.edit_signature)
         item("󰁨  Formularfelder hervorheben", self.toggle_forms, "Felder zum Ausfüllen farbig markieren (an/aus)")
         item("󰈛  Text erkennen (OCR) …", self.ocr_dialog, "Gescannte Seiten durchsuchbar machen")
