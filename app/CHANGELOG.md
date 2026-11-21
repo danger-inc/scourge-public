@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.31.1 (2026-11-21)
+- Netz-Monitor: Fehlermeldung beim Schließen des Reiters behoben.
+
 ## 2.31.0 (2026-11-21)
 - **Neue Kachel „Netz-Monitor“** (system & hardware): zeigt live, welche Programme auf dem Laptop und welche Apps auf dem Handy (per USB-Debugging/adb) wohin verbunden sind – Ziel mit Hostname, Port, gesendete/empfangene Daten (Laptop). Rot „NEU“ = ein Programm spricht mit einem Ziel, das es noch nie kontaktiert hat; gelb = ungewöhnlicher Port. „nur auffällige“ blendet den Rest aus. Ohne Root, es werden keine Inhalte mitgelesen.
 

@@ -176,7 +176,9 @@ class NetWatch(ToolPage):
     # ---------- Sammeln (Hintergrund) ----------
     def tick(self):
         if self.get_root() is None and self.get_parent() is None:      # Tab geschlossen → aufhören
-            self.dns.shutdown(wait=False)
+            dns = getattr(self, "dns", None)                           # release_tree hat die Attribute evtl. schon geleert
+            if dns:
+                dns.shutdown(wait=False)
             return False
         if self.rec.get_active() and not self.busy_poll:
             self.poll()
