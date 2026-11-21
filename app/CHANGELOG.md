@@ -1,5 +1,8 @@
 # scourge – Änderungen
 
+## 2.31.0 (2026-11-21)
+- **Neue Kachel „Netz-Monitor“** (system & hardware): zeigt live, welche Programme auf dem Laptop und welche Apps auf dem Handy (per USB-Debugging/adb) wohin verbunden sind – Ziel mit Hostname, Port, gesendete/empfangene Daten (Laptop). Rot „NEU“ = ein Programm spricht mit einem Ziel, das es noch nie kontaktiert hat; gelb = ungewöhnlicher Port. „nur auffällige“ blendet den Rest aus. Ohne Root, es werden keine Inhalte mitgelesen.
+
 ## 2.30.0 (2026-11-17)
 - **„PDF bearbeiten“ steckt jetzt in scourge-pdf** (die Kachel in Scourge ist weg): Oben links wechselst du wie in Affinity zwischen **bearbeiten** (lesen, markieren, Text, Unterschrift) und **seiten** (hinzufügen, löschen, drehen, umsortieren). Der Schalter arbeitet an genau der Datei, die im Tab offen ist – Anmerkungen werden beim Wechsel gesichert, gespeicherte Seitenänderungen siehst du sofort im Editor („weiter bearbeiten“).
 - **Zoom wie bei Apple**: Strg+Mausrad, Pinch und Strg +/− zoomen weich auf die Zeigerposition (bzw. die Mitte der zwei Finger) – nichts springt mehr, der Punkt unter dem Finger bleibt stehen, auch seitlich.

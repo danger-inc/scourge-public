@@ -606,10 +606,15 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
         keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)   # vor dem ScrolledWindow, das Pfeile sonst als Rollen nimmt
         self.add_controller(keys)
         self.keys = keys
-        zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
+        # Auslauf nach dem Loslassen macht dieses Widget selbst (GTK-Kinetik lässt sich nicht abbrechen: Pfeiltasten und
+        # Zoom kämpften dagegen und wurden erst nach dem Rutschen oder gar nicht umgesetzt)
+        self.scroll.set_kinetic_scrolling(False)
+        self._fling_id, self._fling_v, self._fling_last, self._rest_id, self._ctrl_scroll = None, (0.0, 0.0), 0, 0, False
+        zoom = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES | Gtk.EventControllerScrollFlags.KINETIC)
         zoom.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         zoom.connect("scroll", self.on_scroll)
-        self.scroll.add_controller(zoom)
+        zoom.connect("decelerate", self._on_decelerate)
+        ov.add_controller(zoom)          # am Elternteil: kommt VOR dem ScrolledWindow und nimmt ihm alle Scroll-Ereignisse (samt GTK-Kinetik)
         self._pinch_t = 0.0
         self._ptr, self._zt, self._za, self._z_id, self._z_last, self._zooming, self._zfix = None, None, None, None, 0, False, None
         mot = Gtk.EventControllerMotion()
@@ -1323,6 +1328,8 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
         Ohne Angabe: Zeiger, wenn er über den Seiten steht, sonst Bildmitte."""
         z = max(0.2, min(z, 6))
         self.fit = False
+        self.stop_fling()
+        self._rest_id += 1               # ausstehende Positions-Korrekturen (_restore_anchor) dürfen nicht mehr dazwischenfunken
         if ax is None:
             ax, ay = self._ptr or (None, None)
         if not self._z_id or self._za is None or (ax, ay) != self._za:
@@ -1383,7 +1390,8 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
                 p.set_size_request(int(w * z), int(h * z))
             self.zoom_lbl.set_label("Breite" if self.fit else f"{round(z * 100)} %")
             if anchor:
-                GLib.idle_add(self._restore_anchor, *anchor)
+                self._rest_id += 1
+                GLib.idle_add(self._restore_anchor, anchor[0], anchor[1], 0, self._rest_id)
             else:
                 GLib.idle_add(lambda: (self.goto(page, render_only=False), False)[-1])
             return
@@ -1425,12 +1433,14 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
             self.update()
         return i, fy, fx
 
-    def _restore_anchor(self, i, frac, tries=0):
+    def _restore_anchor(self, i, frac, tries=0, gid=None):
+        if gid is not None and gid != self._rest_id:
+            return False
         va = self.scroll.get_vadjustment()
         mid = self.offsets()[i] + frac * self.sizes[i][1] * self.zoom
         want = max(0, mid - va.get_page_size() / 2)
         if tries < 30 and va.get_upper() - va.get_page_size() < want - 1:   # Seiten noch nicht gelayoutet → gleich nochmal
-            GLib.timeout_add(40, self._restore_anchor, i, frac, tries + 1)
+            GLib.timeout_add(40, self._restore_anchor, i, frac, tries + 1, gid)
             return False
         va.set_value(want)
         self.update()
@@ -1537,6 +1547,7 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
 
     def smooth_by(self, dy):
         """Pfeiltasten: weich auf ein Ziel zugleiten (Tastenwiederholung addiert nur das Ziel) statt in 80-px-Sprüngen."""
+        self.stop_fling()
         va = self.scroll.get_vadjustment()
         lo, hi = va.get_lower(), max(va.get_lower(), va.get_upper() - va.get_page_size())
         base = self._sm_goal if getattr(self, "_sm_goal", None) is not None else va.get_value()
@@ -1568,6 +1579,7 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
             return 0
         i = max(0, min(i, len(self.sizes) - 1))
         self._sm_goal = None
+        self.stop_fling()
         va = self.scroll.get_vadjustment()
         if render_only:
             self.update()
@@ -3414,6 +3426,7 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
         return True
 
     def _pinch_begin(self, *_):
+        self.stop_fling()
         self._pinch0 = self._zt if self._z_id else self.zoom
         self._pinch_t = float("inf")
 
@@ -3421,14 +3434,64 @@ class PdfView(MoreMixin, ExtraMixin, Gtk.Box):
         ok, cx, cy = g.get_bounding_box_center()
         self.zoom_to(self._pinch0 * scale, cx if ok else None, cy if ok else None, tau=0.035)
 
+    def stop_fling(self):
+        if self._fling_id:
+            self.scroll.remove_tick_callback(self._fling_id)
+            self._fling_id = None
+        self._fling_v = (0.0, 0.0)
+
+    def _on_decelerate(self, _c, vx, vy):
+        if self._ctrl_scroll or self._z_id or GLib.get_monotonic_time() - self._pinch_t < 600000 or max(abs(vx), abs(vy)) < 20:
+            return
+        self._fling_v, self._fling_last = (vx, vy), 0
+        if not self._fling_id:
+            self._fling_id = self.scroll.add_tick_callback(self._fling_tick)
+
+    def _fling_tick(self, _w, clock):
+        va, ha = self.scroll.get_vadjustment(), self.scroll.get_hadjustment()
+        t = clock.get_frame_time()
+        dt = min((t - self._fling_last) / 1e6, 0.05) if self._fling_last else 1 / 60
+        self._fling_last = t
+        ox, oy = ha.get_value(), va.get_value()
+        vx, vy = self._fling_v
+        ha.set_value(ox + vx * dt)
+        va.set_value(oy + vy * dt)
+        k = math.exp(-dt / 0.45)
+        self._fling_v = (vx * k, vy * k)
+        moved = ha.get_value() != ox or va.get_value() != oy
+        if max(abs(vx * k), abs(vy * k)) < 12 or not moved:
+            self._fling_id = None
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
+
     def on_scroll(self, ctrl, dx, dy):
+        """ALLES Scrollen läuft hier (das ScrolledWindow bekommt nichts): Touchpad direkt, Mausrad weich, Strg = Zoom."""
+        self.stop_fling()
+        st = ctrl.get_current_event_state()
+        self._ctrl_scroll = bool(st & Gdk.ModifierType.CONTROL_MASK)
         # Während (und kurz nach) dem Pinch rutschen Restbewegungen als Scrollen durch → verschlucken
         if GLib.get_monotonic_time() - self._pinch_t < 300000:
             return True
-        if ctrl.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
+        if self._ctrl_scroll:
             self.zoom_by(math.exp(-max(-4.0, min(4.0, dy)) * 0.12))   # Rastermaus: ~±12 % je Raste, Touchpad: stufenlos
             return True
-        return False
+        if not self.doc:
+            return True
+        va, ha = self.scroll.get_vadjustment(), self.scroll.get_hadjustment()
+        if ctrl.get_unit() == Gdk.ScrollUnit.WHEEL:
+            if st & Gdk.ModifierType.SHIFT_MASK and not dx:
+                dx, dy = dy, 0.0
+            if dy:
+                self.smooth_by(dy * va.get_page_size() ** (2 / 3))
+            if dx:
+                ha.set_value(ha.get_value() + dx * ha.get_page_size() ** (2 / 3))
+        else:
+            self._sm_goal = None
+            if dy:
+                va.set_value(va.get_value() + dy)
+            if dx:
+                ha.set_value(ha.get_value() + dx)
+        return True
 
 
 def _gpoint(x, y):

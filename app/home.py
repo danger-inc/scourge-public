@@ -167,6 +167,8 @@ class HomePage(Gtk.ScrolledWindow):
             if section == "cursor" and not os.path.exists(os.path.expanduser("~/.local/share/rice-apps/cursor/make-cursor.py")):
                 continue
             fl.append(self.mk(icon, name, desc, lambda section=section: self.open_settings(section)))
+        fl.append(self.mk("󰖩", "Netz-Monitor", "Welche Programme auf Laptop und Handy wohin Daten schicken",
+                          lambda: tab.open_page("tool-netwatch", lambda: __import__("netwatch").NetWatch(tab))))
         try:
             import publish
             if publish.available():
